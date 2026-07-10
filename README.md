@@ -1,54 +1,62 @@
-# RobinArb
+# 🤖 RobinArb
 
-> 🇮🇩 Versi Bahasa Indonesia: [README.id.md](README.id.md)
+> 🇮🇩 Versi Bahasa Indonesia: **[README.id.md](README.id.md)**
 
-Atomic arbitrage bot for **Robinhood Chain** (chainId 4663): trades the gap between
-a token's **RobinFun bonding curve** and its **Uniswap V4** pool, in a single
-profit-or-revert transaction.
+**Atomic arbitrage bot for Robinhood Chain** (chainId `4663`) — trades the gap between
+a token's **RobinFun bonding curve** and its **Uniswap V4 pool**, in a single
+**profit‑or‑revert** transaction.
 
-- **Direction A** — buy on the curve → sell on V4 (fires when V4 is pumped above the curve)
-- **Direction B** — buy on V4 → sell on the curve (fires when V4 is dumped below the curve)
+| Dir | Route | Fires when |
+|:--:|---|---|
+| 🅐 | 🟢 buy **curve** → 🔴 sell **V4** | V4 pumped **above** the curve |
+| 🅑 | 🟢 buy **V4** → 🔴 sell **curve** | V4 dumped **below** the curve |
 
-The bot auto-discovers every token that has both an active curve and a liquid V4
-pool, watches them event-driven, sizes each trade optimally, and only fires when the
-net edge (after the 1% curve fee, the V4 pool fee, slippage and gas) clears the gate.
+⚙️ Auto‑discovers every token with an active curve **and** a liquid V4 pool, watches
+them event‑driven, sizes each trade optimally, and only fires when the net edge
+(after the 1% curve fee, the V4 pool fee, slippage & gas) clears the gate.
 
-## How it works — operator playbook
+---
 
-You create the arbitrage venue; the bot captures it automatically. Steps:
+## 📖 How it works — operator playbook
 
-1. **Find a curve token.** Browse tokens on **https://robinfun.live** and pick one
-   with at least **10% bonding progress** — enough curve depth to trade against.
+> 🎯 **You create the arbitrage venue; the bot captures it automatically.**
 
-2. **Create its Uniswap V4 pool manually.** Add a pool for that token on Uniswap V4
-   with a **25% base fee**, and set the **initial price equal to the token's current
-   bonding-curve price** (so the pool starts aligned with the curve — no free loss).
+### 1️⃣ Find a curve token
+Browse **[robinfun.live](https://robinfun.live)** → pick one with **≥ 10% bonding
+progress** (enough curve depth to trade against).
 
-3. **Trigger / seed the pool.** Copy the token's **contract address**, paste it into
-   **https://trigerpool.vercel.app**, connect your wallet, leave the trigger settings
-   on **default**, and click **Swap**. This initializes the pool and emits its first
-   on-chain Swap.
+### 2️⃣ Create its Uniswap V4 pool
+Add a pool for that token with a **25% base fee**, and set the **initial price = the
+token's current bonding‑curve price** — so the pool starts aligned (no free loss).
 
-4. **The bot takes over — no manual input needed.** RobinArb's real-time listener
-   watches the Uniswap V4 PoolManager `Initialize` event. The moment your new pool is
-   created it is **added to the watchlist automatically** (also persisted, and the
-   6-hourly `npm run scan` backstops it) — you never edit the bot to add a token.
-   From then on it quotes both directions and fires an atomic trade whenever the pool
-   price diverges from the curve past the fees.
+### 3️⃣ Trigger / seed the pool
+Copy the token's **contract address** → paste into
+**[trigerpool.vercel.app](https://trigerpool.vercel.app)** → connect wallet → leave
+settings on **default** → click **Swap**. This initializes the pool + emits its first
+on‑chain Swap.
 
-> TL;DR: pick a ≥10% bonded RobinFun token → make its 25% V4 pool at the curve price
-> → trigger it once → the bot detects it live and arbs it.
+### 4️⃣ Bot takes over — zero manual input
+RobinArb's real‑time listener watches the V4 PoolManager `Initialize` event. The
+moment your pool is created it's **added to the watchlist automatically** (persisted,
+plus the 6‑hourly `npm run scan` backstop) — you **never edit the bot to add a token**.
+From there it quotes both directions and fires atomic whenever the pool diverges from
+the curve past the fees.
 
-## How it trades (atomic)
+> ⚡ **TL;DR** — pick a ≥10% bonded token → make its 25% V4 pool at the curve price →
+> trigger once → the bot detects it live and arbs it. 💰
+
+---
+
+## ⚛️ How it trades (atomic)
 
 `contracts/ArbExecutor.sol` holds the working capital and does buy+sell in **one tx**
-that **reverts unless the contract's ETH balance grows by `minProfit`** — so a closed
+that **reverts unless the contract's ETH balance grows by `minProfit`** — a closed
 window costs only gas, never an inventory loss. The owner wallet only pays gas.
 
-- `curveToV4(token, ethIn, minTokensOut, key, minEthOut, minProfit)` — dir A
-- `v4ToCurve(token, ethIn, minTokensOut, key, minEthOut, minProfit)` — dir B
-- `forceCurveToV4 / forceV4ToCurve` — owner-only manual override (no profit guard, for testing)
-- `withdraw / rescueToken / setOwner` — owner only
+- 🅐 `curveToV4(token, ethIn, minTokensOut, key, minEthOut, minProfit)` — dir A
+- 🅑 `v4ToCurve(token, ethIn, minTokensOut, key, minEthOut, minProfit)` — dir B
+- 🛠️ `forceCurveToV4` / `forceV4ToCurve` — owner‑only manual override (no profit guard, testing)
+- 🔑 `withdraw` / `rescueToken` / `setOwner` — owner only
 
 ## Setup
 

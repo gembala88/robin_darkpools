@@ -1,51 +1,59 @@
-# RobinArb 🇮🇩
+# 🤖 RobinArb 🇮🇩
 
-> 🌐 English version: [README.md](README.md)
+> 🌐 English version: **[README.md](README.md)**
 
-Bot arbitrase atomic buat **Robinhood Chain** (chainId 4663): ngambil selisih harga
-antara **bonding curve RobinFun** sebuah token dan **pool Uniswap V4**-nya, dalam
-satu transaksi yang **profit-or-revert**.
+**Bot arbitrase atomic buat Robinhood Chain** (chainId `4663`) — ngambil selisih harga
+antara **bonding curve RobinFun** sebuah token dan **pool Uniswap V4**-nya, dalam satu
+transaksi **profit‑or‑revert**.
 
-- **Arah A** — beli di curve → jual di V4 (nembak pas V4 ke-pump di atas curve)
-- **Arah B** — beli di V4 → jual di curve (nembak pas V4 di-dump di bawah curve)
+| Arah | Rute | Nembak pas |
+|:--:|---|---|
+| 🅐 | 🟢 beli **curve** → 🔴 jual **V4** | V4 ke‑pump **di atas** curve |
+| 🅑 | 🟢 beli **V4** → 🔴 jual **curve** | V4 di‑dump **di bawah** curve |
 
-Bot otomatis nyari semua token yang punya curve aktif **dan** pool V4 berlikuiditas,
-mantau event-driven, cari ukuran trade optimal, dan cuma nembak kalau net edge
-(setelah fee curve 1%, fee pool V4, slippage, dan gas) ngelewatin gate.
+⚙️ Otomatis nyari semua token yang punya curve aktif **dan** pool V4 berlikuiditas,
+mantau event‑driven, cari ukuran trade optimal, dan cuma nembak kalau net edge
+(setelah fee curve 1%, fee pool V4, slippage & gas) ngelewatin gate.
 
-## Cara kerja — panduan operator
+---
 
-Lo yang bikin venue arb-nya; bot yang eksekusi otomatis. Langkahnya:
+## 📖 Cara kerja — panduan operator
 
-1. **Cari token curve.** Buka **https://robinfun.live**, pilih token yang **bonding-nya
-   minimal 10%** — biar curve-nya cukup dalem buat di-trade.
+> 🎯 **Lo yang bikin venue arb-nya; bot yang eksekusi otomatis.**
 
-2. **Bikin pool Uniswap V4-nya manual.** Add pool token itu di Uniswap V4 dengan
-   **base fee 25%**, dan set **harga awal sama persis dengan harga bonding curve saat
-   itu** (biar pool selaras sama curve — gak rugi pas seed).
+### 1️⃣ Cari token curve
+Buka **[robinfun.live](https://robinfun.live)** → pilih yang **bonding-nya minimal
+10%** (biar curve-nya cukup dalem buat di-trade).
 
-3. **Trigger / seed pool-nya.** Copy **contract address** token-nya, paste ke
-   **https://trigerpool.vercel.app**, connect wallet, biarin setting trigger
-   **default**, klik **Swap**. Ini nginisialisasi pool + ngeluarin Swap pertama.
+### 2️⃣ Bikin pool Uniswap V4-nya
+Add pool token itu dengan **base fee 25%**, dan set **harga awal = harga bonding curve
+saat itu** — biar pool selaras sama curve (gak rugi pas seed).
 
-4. **Bot yang ambil alih — tanpa input manual.** Listener real-time RobinArb mantau
-   event `Initialize` di PoolManager Uniswap V4. Begitu pool baru lo kebuat, langsung
-   **masuk watchlist otomatis** (kesimpen juga, plus `npm run scan` tiap 6 jam sebagai
-   cadangan) — lo **gak perlu edit bot** buat nambahin token. Abis itu bot quote 2
-   arah dan nembak atomic tiap harga pool divergen dari curve ngelewatin fee.
+### 3️⃣ Trigger / seed pool-nya
+Copy **contract address** token → paste ke
+**[trigerpool.vercel.app](https://trigerpool.vercel.app)** → connect wallet → biarin
+**default** → klik **Swap**. Ini nginisialisasi pool + ngeluarin Swap pertama.
 
-> Ringkas: pilih token RobinFun bonding ≥10% → bikin pool V4 fee 25% di harga curve →
-> trigger sekali → bot deteksi live terus arb sendiri.
+### 4️⃣ Bot ambil alih — tanpa input manual
+Listener real‑time RobinArb mantau event `Initialize` di PoolManager Uniswap V4.
+Begitu pool lo kebuat, langsung **masuk watchlist otomatis** (kesimpen, plus
+`npm run scan` tiap 6 jam sebagai cadangan) — lo **gak perlu edit bot** buat nambahin
+token. Abis itu bot quote 2 arah dan nembak atomic tiap harga pool divergen dari curve.
 
-## Cara trade-nya (atomic)
+> ⚡ **Ringkas** — pilih token bonding ≥10% → bikin pool V4 fee 25% di harga curve →
+> trigger sekali → bot deteksi live terus arb sendiri. 💰
+
+---
+
+## ⚛️ Cara trade-nya (atomic)
 
 `contracts/ArbExecutor.sol` nyimpen modal kerja dan ngelakuin beli+jual dalam **1 tx**
-yang **revert kalau saldo kontrak gak naik minimal `minProfit`** — jadi window yang
-keburu nutup cuma buang gas, gak pernah nyangkut token. Wallet owner cuma bayar gas.
+yang **revert kalau saldo kontrak gak naik minimal `minProfit`** — window yang keburu
+nutup cuma buang gas, gak pernah nyangkut token. Wallet owner cuma bayar gas.
 
-- `curveToV4(...)` — arah A · `v4ToCurve(...)` — arah B
-- `forceCurveToV4 / forceV4ToCurve` — override manual owner (tanpa profit-guard, buat tes)
-- `withdraw / rescueToken / setOwner` — owner only
+- 🅐 `curveToV4(...)` — arah A · 🅑 `v4ToCurve(...)` — arah B
+- 🛠️ `forceCurveToV4` / `forceV4ToCurve` — override manual owner (tanpa profit-guard, buat tes)
+- 🔑 `withdraw` / `rescueToken` / `setOwner` — owner only
 
 ## Setup
 
