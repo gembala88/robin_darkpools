@@ -147,22 +147,19 @@ async function main() {
     const minProfit = (b.size * CFG.minProfitBps) / 10000n;
     const minEth = b.size + minProfit;
     if (executor) {
-      const before = await execProvider.getBalance(executor.target);
-      let rc;
-      if (b.dir === 'A') {
-        const minTok = bpsDown(await curve.quoteBuy(token, b.size), CFG.slippageBps);
-        console.log(`  [atomic A] ${b.market.symbol} pool=${b.pool.name} size=${formatEther(b.size)}`);
-        rc = await (await executor.curveToV4(token, b.size, minTok, keyTuple(b.pool.key), minEth, minProfit)).wait();
-      } else {
-        const minTok = bpsDown(b.tok, CFG.slippageBps);
-        console.log(`  [atomic B] ${b.market.symbol} pool=${b.pool.name} size=${formatEther(b.size)}`);
-        rc = await (await executor.v4ToCurve(token, b.size, minTok, keyTuple(b.pool.key), minEth, minProfit)).wait();
-      }
-      let net = 0n;
-      try { net = (await execProvider.getBalance(executor.target)) - before; } catch {}
-      console.log('  tx', rc.hash, '| net', formatEther(net), 'ETH');
+      // Fire IMMEDIATELY — reuse the size the scan already quoted (b.tok). No
+      // pre-fire getBalance/quoteBuy: a hung RPC call there used to leave busy=true
+      // and stall the bot past the window (missed a live opportunity). Net is
+      // computed from the receipt in notifyAtomic, so no post-fire balance read.
+      const minTok = bpsDown(b.tok, CFG.slippageBps);
+      console.log(`  [atomic ${b.dir}] ${b.market.symbol} pool=${b.pool.name} size=${formatEther(b.size)}`);
+      const call = b.dir === 'A'
+        ? executor.curveToV4(token, b.size, minTok, keyTuple(b.pool.key), minEth, minProfit)
+        : executor.v4ToCurve(token, b.size, minTok, keyTuple(b.pool.key), minEth, minProfit);
+      const rc = await (await call).wait();
+      console.log('  tx', rc.hash);
       // fire-and-forget so a notif hiccup can never block/crash the trade loop
-      notifyAtomic({ symbol: b.market.symbol, dir: b.dir, buyVenue: b.dir === 'A' ? 'curve' : `V4 ${b.pool.name}`, sellVenue: b.dir === 'A' ? `V4 ${b.pool.name}` : 'curve', sizeEth: b.size, receipt: rc, netEth: net }).catch(() => {});
+      notifyAtomic({ symbol: b.market.symbol, dir: b.dir, buyVenue: b.dir === 'A' ? 'curve' : `V4 ${b.pool.name}`, sellVenue: b.dir === 'A' ? `V4 ${b.pool.name}` : 'curve', sizeEth: b.size, receipt: rc, netEth: 0n }).catch(() => {});
       return;
     }
     await ensureEOA(token);
@@ -222,9 +219,18 @@ async function main() {
       console.log('>>> OPPORTUNITY', line);
       if (!CFG.live || !wallet) { console.log('    (idle: dry-run/no wallet)'); return; }
       busy = true;
-      try { await execute(b); }
-      catch (e) { console.log('    exec FAILED:', e.shortMessage || e.message); await notifyError(`${b.market.symbol} ${b.tag}: ${e.shortMessage || e.message}`); }
-      finally { busy = false; gasCost = ((await provider.getFeeData()).gasPrice ?? gasPrice) * CFG.gasUnits; }
+      try {
+        // hard 120s cap: a hung RPC inside execute() must never leave busy=true
+        // and stall the bot past the next window (that missed a live opportunity).
+        await Promise.race([execute(b), new Promise((_, rej) => setTimeout(() => rej(new Error('execute timeout 120s')), 120000))]);
+      } catch (e) {
+        console.log('    exec FAILED:', e.shortMessage || e.message);
+        notifyError(`${b.market.symbol} ${b.tag}: ${e.shortMessage || e.message}`).catch(() => {});
+      } finally {
+        busy = false;
+        // non-blocking gas refresh — getFeeData must not hang the busy reset
+        provider.getFeeData().then((fd) => { gasCost = (fd.gasPrice ?? gasPrice) * CFG.gasUnits; }).catch(() => {});
+      }
     } else if (Date.now() - lastLog > 15000 || trigger === 'swap') {
       lastLog = Date.now(); console.log('idle    ', line);
     }
