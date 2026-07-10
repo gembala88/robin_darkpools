@@ -1,0 +1,25 @@
+{
+  "name": "robinarb",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Atomic arbitrage bot: RobinFun bonding curve <-> Uniswap V4 on Robinhood Chain",
+  "scripts": {
+    "monitor": "node arb.js",
+    "live": "LIVE=1 node arb.js",
+    "scan": "node scanner.js",
+    "snapshot": "node snapshot.js",
+    "discover": "node discover.mjs",
+    "build:contract": "node scripts/compile.js",
+    "deploy": "node deploy.js",
+    "deposit": "node deposit.js",
+    "withdraw": "node withdraw.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "ethers": "^6.17.0"
+  },
+  "devDependencies": {
+    "solc": "^0.8.26"
+  }
+}

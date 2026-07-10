@@ -1,0 +1,11 @@
+# Secrets — NEVER commit
+.env
+.env.local
+
+# deps / build / runtime
+node_modules/
+build/
+logs/
+*.log
+watchlist.json
+.DS_Store
