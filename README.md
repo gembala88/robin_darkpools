@@ -1,5 +1,7 @@
 # RobinArb
 
+> 🇮🇩 Versi Bahasa Indonesia: [README.id.md](README.id.md)
+
 Atomic arbitrage bot for **Robinhood Chain** (chainId 4663): trades the gap between
 a token's **RobinFun bonding curve** and its **Uniswap V4** pool, in a single
 profit-or-revert transaction.
