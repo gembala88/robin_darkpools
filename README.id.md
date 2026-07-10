@@ -54,9 +54,11 @@ npm install
 cp .env.example .env      # isi PRIVATE_KEY, EXEC_RPC_URL, Telegram; EXECUTOR_ADDR nanti
 ```
 
-RPC: set `EXEC_RPC_URL` ke endpoint privat (Alchemy/dRPC) buat eksekusi trade.
-Monitoring fallback ke RPC publik Robinhood dengan **bypass blokir DNS bawaan**
-(pin IP Cloudflare + DoH) — jalan di ISP yang blok `*.robinhood.com`, tanpa VPN.
+RPC (opsional): langsung jalan pake **RPC publik Robinhood** (udah keisi di
+`.env.example`), dengan **bypass blokir DNS bawaan** (pin IP Cloudflare + DoH) buat
+ISP yang blok `*.robinhood.com` — tanpa VPN. Kalau mau eksekusi lebih reliable, bisa
+**opsional** arahin `EXEC_RPC_URL` ke endpoint privat Alchemy — bikin gratis di
+**https://dashboard.alchemy.com** (create app buat Robinhood Chain).
 
 ## Deploy + isi modal kontrak
 
