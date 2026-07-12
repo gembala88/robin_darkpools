@@ -41,7 +41,12 @@ const CFG = {
   get llmScoreMin() { return Number(process.env.SCREENER_LLM_SCORE_MIN ?? UC('llmScoreMin', 50)); },
   get llmCooldownHours() { return Number(process.env.SCREENER_LLM_COOLDOWN_HOURS ?? UC('llmCooldownHours', 6)); },
   get periodicHours() { return Number(process.env.SCREENER_PERIODIC_HOURS ?? UC('periodicHours', 6)); },
+  get scanChunkSize() { return Number(process.env.SCREENER_SCAN_CHUNK ?? UC('scanChunkSize', 200000)); },
+  get scanDelayMs() { return Number(process.env.SCREENER_SCAN_DELAY ?? UC('scanDelayMs', 300)); },
+  get maxRetryDelay() { return Number(process.env.SCREENER_MAX_RETRY ?? UC('maxRetryDelay', 30000)); },
 };
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 const STATE_FILE = 'screener_state.json';
 
@@ -81,17 +86,25 @@ function decodeFeeEvent(log) {
   return { token, amount };
 }
 
-async function getLogsChunked(provider, filter, from, to, step = 500_000) {
+async function getLogsChunked(provider, filter, from, to, step, retries = 0) {
+  if (!step) step = 200_000;
   const out = [];
   for (let s = from; s <= to; s += step) {
     const e = Math.min(s + step - 1, to);
     try {
       out.push(...await provider.getLogs({ ...filter, fromBlock: s, toBlock: e }));
     } catch (err) {
-      if (e > s) {
+      const msg = (err.shortMessage || err.message || '').toLowerCase();
+      const isRetryable = msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('rate');
+      if (isRetryable && retries < 6) {
+        const delay = Math.min(1000 * Math.pow(2, retries), CFG.maxRetryDelay);
+        console.log(`  429 on blocks ${s}–${e} — backoff ${delay}ms (#${retries + 1})`);
+        await sleep(delay + Math.random() * 500);
+        out.push(...await getLogsChunked(provider, filter, s, e, step, retries + 1));
+      } else if (e > s) {
         const m = (s + e) >> 1;
-        out.push(...await getLogsChunked(provider, filter, s, m, m - s + 1));
-        out.push(...await getLogsChunked(provider, filter, m + 1, e, e - m));
+        out.push(...await getLogsChunked(provider, filter, s, m));
+        out.push(...await getLogsChunked(provider, filter, m + 1, e));
       } else throw err;
     }
   }
@@ -529,6 +542,67 @@ async function scanRange(provider, fromBlock, toBlock) {
   return allLogs.length;
 }
 
+// ===== HISTORICAL SCAN (checkpointed, progress-logged, rate-limit safe) =====
+
+async function historicalScan(provider, fromBlock, toBlock) {
+  const totalBlocks = toBlock - fromBlock + 1;
+  const chunkSize = CFG.scanChunkSize;
+  const interDelay = CFG.scanDelayMs;
+  let totalEvents = 0, totalNew = 0;
+  const startTime = Date.now();
+
+  for (let s = fromBlock; s <= toBlock; s += chunkSize) {
+    const e = Math.min(s + chunkSize - 1, toBlock);
+
+    // Scan each factory sequentially to spread RPC load
+    const allLogs = [];
+    for (const [name, addr] of Object.entries(FACTORIES)) {
+      const logs = await getLogsChunked(provider, { address: addr, topics: ALL_TOPICS }, s, e);
+      allLogs.push(...logs);
+    }
+    totalEvents += allLogs.length;
+
+    // Process events within this chunk
+    if (allLogs.length) {
+      let buyCount = 0, sellCount = 0, feeCount = 0;
+      for (const lg of allLogs) {
+        const t = lg.topics[0].toLowerCase();
+        if (t === BUY_TOPIC.toLowerCase()) buyCount++;
+        else if (t === SELL_TOPIC.toLowerCase()) sellCount++;
+        else if (t === FEE_TOPIC.toLowerCase()) feeCount++;
+      }
+
+      const byBlock = new Map();
+      for (const lg of allLogs) {
+        const b = lg.blockNumber;
+        if (!byBlock.has(b)) byBlock.set(b, []);
+        byBlock.get(b).push(lg);
+      }
+      for (const [block, logs] of byBlock) {
+        totalNew += await processEvents(provider, logs, block);
+      }
+
+      console.log(`  chunk ${s}–${e}: ${buyCount} Buy, ${sellCount} Sell, ${feeCount} Fee ${totalNew ? `| new tokens: ${totalNew}` : ''}`);
+    }
+
+    // Checkpoint: save progress after EVERY chunk
+    state.lastScannedBlock = e;
+    saveState();
+
+    // Progress log with percentage
+    const scanned = e - fromBlock + 1;
+    const pct = (scanned / totalBlocks * 100).toFixed(1);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+    console.log(`  scanned ${scanned.toLocaleString()} / ${totalBlocks.toLocaleString()} blocks (${pct}%) — ${totalEvents} events — ${elapsed}s`);
+
+    // Throttle between chunks
+    if (e < toBlock) await sleep(interDelay);
+  }
+
+  console.log(`historical scan done: ${totalEvents} events, ${totalNew} new tokens in ${((Date.now()-startTime)/1000).toFixed(0)}s`);
+  return totalEvents;
+}
+
 // ===== EVALUATE ALL TRACKED TOKENS =====
 
 async function evaluateAndNotify(provider, blockNumber, isInitial = false) {
@@ -624,18 +698,16 @@ async function main() {
   // Start command handler in background
   startCommandHandler().catch(e => console.error('cmdHandler error:', e.message));
 
-  // Initial scan
+  // Initial scan (checkpointed, progress-logged, rate-limit safe)
   const startBlock = state.lastScannedBlock > 0 ? state.lastScannedBlock + 1 : 0;
   if (startBlock <= currentHead) {
-    console.log(`\nhistorical scan: ${startBlock} → ${currentHead} (${currentHead - startBlock + 1} blocks)`);
-    const ev = await scanRange(provider, startBlock, currentHead);
+    console.log(`\nhistorical scan: ${startBlock} → ${currentHead} (${(currentHead - startBlock + 1).toLocaleString()} blocks)`);
+    console.log(`  chunk size: ${CFG.scanChunkSize.toLocaleString()} blocks, delay: ${CFG.scanDelayMs}ms, sequential per factory`);
+    const ev = await historicalScan(provider, startBlock, currentHead);
     if (ev === 0) console.log('  (no events found — verify event sigs in .env)');
   } else {
     console.log('state already up-to-date (lastScannedBlock =', state.lastScannedBlock, ')');
   }
-
-  state.lastScannedBlock = currentHead;
-  saveState();
 
   // Immediate evaluation
   console.log('\ninitial evaluation:');

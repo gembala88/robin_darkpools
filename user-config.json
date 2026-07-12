@@ -15,6 +15,9 @@
   "volumeWindowHours": 1,
   "stateSaveInterval": 60000,
   "periodicHours": 6,
+  "scanChunkSize": 200000,
+  "scanDelayMs": 300,
+  "maxRetryDelay": 30000,
 
   "llmScoreMin": 50,
   "llmCooldownHours": 6,
