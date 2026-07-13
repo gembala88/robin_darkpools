@@ -1,7 +1,7 @@
-// provider.js — ethers v6 JsonRpcProvider that works behind the ISP DNS block.
-// It connects straight to the Cloudflare origin IP while keeping SNI + Host =
-// the real hostname (so TLS + Cloudflare routing still work). If RPC_URL is set
-// (e.g. an Alchemy/dRPC endpoint on a VPS), it uses a plain provider instead.
+// provider.js — ethers v6 JsonRpcProvider with automatic RPC fallback.
+// Primary: RPC_URL env (Alchemy/dRPC) or IP-pinned Cloudflare bypass.
+// Fallback: public RPC (rpc.mainnet.chain.robinhood.com) if primary fails.
+// Fallback cooldown: 5 minutes before retrying primary.
 
 import https from 'node:https';
 import { JsonRpcProvider, Network } from 'ethers';
@@ -57,7 +57,6 @@ class PinnedProvider extends JsonRpcProvider {
     this._inflight++;
   }
   _release() { this._inflight--; const n = this._queue.shift(); if (n) n(); }
-  // concurrency-limited POST with 429/503 backoff
   async _post(bodyStr) {
     await this._acquire();
     try {
@@ -80,16 +79,73 @@ class PinnedProvider extends JsonRpcProvider {
   }
 }
 
-export async function makeProvider() {
-  if (process.env.RPC_URL) {
-    const net = new Network(CHAIN.name, CHAIN.id);
-    return new JsonRpcProvider(process.env.RPC_URL, net, { staticNetwork: net });
+// ===== FALLBACK PROVIDER =====
+// Wraps two providers: primary + fallback. ALL JSON-RPC calls go through
+// send(). If primary throws, we switch to fallback for 5 minutes, then
+// try primary again.
+
+class FallbackProvider extends JsonRpcProvider {
+  constructor(primary, fallback) {
+    super('http://127.0.0.1:1', undefined, { staticNetwork: true });
+    this._pri = primary;
+    this._sec = fallback;
+    this._mode = 'primary';
+    this._switchTime = 0;
+    this._cooldownMs = 5 * 60 * 1000;
   }
-  let ips = await resolveViaDoH(CHAIN.rpcHost);
-  if (!ips.length) ips = CHAIN.rpcIps;
-  const provider = new PinnedProvider(CHAIN.rpcHost, ips[0]);
-  // sanity check
-  const n = await provider.getNetwork();
+
+  // Override the low-level _send — ALL provider methods funnel through here
+  async _send(request) {
+    // Try to recover primary after cooldown
+    if (this._mode === 'fallback' && Date.now() - this._switchTime > this._cooldownMs) {
+      console.log('RPC fallback: cooldown expired, retrying primary');
+      this._mode = 'primary';
+    }
+
+    const provider = this._mode === 'primary' ? this._pri : this._sec;
+    try {
+      const result = await provider._send(request);
+      if (this._mode === 'fallback') {
+        console.log('RPC fallback: primary recovered');
+        this._mode = 'primary';
+      }
+      return result;
+    } catch (err) {
+      if (this._mode === 'fallback') throw err; // fallback also failed
+      const msg = err.shortMessage || err.message || String(err);
+      console.log(`RPC fallback: primary error (${msg.slice(0, 80)}) — switching to fallback for 5min`);
+      this._mode = 'fallback';
+      this._switchTime = Date.now();
+      return this._sec._send(request);
+    }
+  }
+}
+
+// ===== PROVIDER FACTORY =====
+
+export async function makeProvider() {
+  const net = new Network(CHAIN.name, CHAIN.id);
+  const opts = { staticNetwork: net, batchMaxCount: 1 };
+
+  // --- Build primary provider ---
+  let primary;
+  if (process.env.RPC_URL) {
+    primary = new JsonRpcProvider(process.env.RPC_URL, net, opts);
+  } else {
+    let ips = await resolveViaDoH(CHAIN.rpcHost);
+    if (!ips.length) ips = CHAIN.rpcIps;
+    primary = new PinnedProvider(CHAIN.rpcHost, ips[0]);
+  }
+
+  // --- Build fallback provider (public RPC) ---
+  const fallback = new JsonRpcProvider('https://' + CHAIN.rpcHost, net, opts);
+
+  // --- Wrap in fallback logic ---
+  const wrapped = new FallbackProvider(primary, fallback);
+
+  // Sanity check (uses FallbackProvider._send → tries primary)
+  const n = await wrapped.getNetwork();
   if (Number(n.chainId) !== CHAIN.id) throw new Error(`wrong chain ${n.chainId}`);
-  return provider;
+
+  return wrapped;
 }
