@@ -728,6 +728,10 @@ async function main() {
     console.log('state already up-to-date (lastScannedBlock =', state.lastScannedBlock, ')');
   }
 
+  // Refresh all curve states so initial evaluation shows real grad/volume data
+  console.log('\nrefreshing curve states...');
+  await refreshAllCurves(provider);
+
   // Immediate evaluation
   console.log('\ninitial evaluation:');
   await evaluateAndNotify(provider, currentHead, true);
