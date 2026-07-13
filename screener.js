@@ -5,6 +5,7 @@ import { makeProvider } from './provider.js';
 import { V4, UC, UCW, UCS } from './config.js';
 import { tg, tgScreener, setCommandCtx, startCommandHandler } from './telegram.js';
 import { analyzeToken } from './llm.js';
+import { checkGMGN } from './gmgn.js';
 
 // ===== ON-CHAIN ADDRESSES =====
 const FACTORIES = {
@@ -234,6 +235,9 @@ function initTokenInfo(token, factory, buyer, ethIn, blockNumber, symbol) {
     ageHours: 0,
     buyerConcentration: 0,
     sellBuyRatio: 0,
+    gmgnChecked: false,
+    gmgnFlaggedRisk: false,
+    gmgnFlags: null,
   };
 }
 
@@ -351,6 +355,7 @@ function checkCriteria(info, metrics) {
     safeliquidity: realEth >= S.minLiquidityEth,
     safesellratio: metrics.sellBuyRatio <= S.maxSellBuyRatio,
     safedistribution: metrics.topBuyerPct <= (100 - S.minBuyerDistribution),
+    gmgn: !info.gmgnChecked || !info.gmgnFlaggedRisk,
   };
   const allOk = Object.values(passes).every(Boolean);
   return { passes, allOk };
@@ -682,10 +687,21 @@ async function evaluateAndNotify(provider, blockNumber, isInitial = false) {
       await evaluateWithLLM(info, metrics);
     }
 
+    // GMGN check (once per token, cached 5 min)
+    if (!info.gmgnChecked && metrics.compositeScore >= 10) {
+      const g = await checkGMGN(info.token);
+      if (g) {
+        info.gmgnChecked = true;
+        info.gmgnFlaggedRisk = g.isRisky;
+        info.gmgnFlags = g.flags;
+      }
+    }
+
     // Dashboard line
     if (isInitial || info.lastBuyBlock > blockNumber - 100 || info.passedCriteria) {
       const flag = allOk ? '✅' : info.notified ? '🔔' : '  ';
-      console.log(`${flag} ${info.symbol.padEnd(10)} grad=${info.lastGradPct.toFixed(1).padEnd(6)} buyers=${String(metrics.buyerCount).padEnd(3)} vol1h=${metrics.volume1hEth.toFixed(4).padEnd(10)} score=${String(metrics.compositeScore).padEnd(4)} ${allOk ? '✅ALL' : 'FAIL=' + Object.entries(passes).filter(([,v]) => !v).map(([k]) => k).join(',')}`);
+      const gmgnTag = info.gmgnChecked ? (info.gmgnFlaggedRisk ? '⚠GMGN' : '✓GMGN') : '  GMGN?';
+      console.log(`${flag} ${info.symbol.padEnd(10)} grad=${info.lastGradPct.toFixed(1).padEnd(6)} buyers=${String(metrics.buyerCount).padEnd(3)} vol1h=${metrics.volume1hEth.toFixed(4).padEnd(10)} score=${String(metrics.compositeScore).padEnd(4)} ${allOk ? '✅ALL' : 'FAIL=' + Object.entries(passes).filter(([,v]) => !v).map(([k]) => k).join(',')} ${gmgnTag}`);
     }
   }
   if (isInitial) {

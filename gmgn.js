@@ -1,27 +1,50 @@
-// gmgn.js — GMGN security check integration (scaffolding for when Robinhood Chain is supported)
-//
-// Current GMGN support: sol, bsc, base, eth (Robinhood Chain NOT supported as of 2026-07).
-// This module is a NO-OP until GMGN adds Robinhood. When that happens:
-//   1. Set RPC_URL=https://gmgn.ai/defi/quotation/v1/tokens/security/robinhood/<addr>
-//      (or use the official gmgn-cli)
-//   2. Parse the response fields below
-//   3. Wire checkSecurity() into screener.js evaluateAndNotify()
-//
-// GMGN security response fields (when supported):
-//   is_honeypot: "yes" | "no"
-//   owner_renounced: true | false
-//   open_source: "yes" | "no"
-//   buy_tax: number (0-1)
-//   sell_tax: number (0-1)
-//   top_10_holder_rate: number (0-1)
-//   rug_ratio: number
-//   sniper_count: number
-//   is_blacklisted: boolean
-//   lp_burned_pct: number
-//
-// Get API key at: https://gmgn.ai/ai
+import { execSync } from 'node:child_process';
 
-export async function checkSecurity(tokenAddr) {
-  console.log('GMGN: Robinhood Chain not supported yet — skipping security check for', tokenAddr);
-  return null;
+const KEY = process.env.GMGN_API_KEY;
+const CACHE_TTL = 5 * 60 * 1000;
+const cache = new Map();
+
+function n(v) { return Number(v || 0); }
+
+function runCLI(cmd, tokenAddr) {
+  return execSync(
+    `npx gmgn-cli ${cmd} --chain robinhood --address ${tokenAddr} --raw`,
+    { timeout: 10000, env: { ...process.env, GMGN_API_KEY: KEY } }
+  ).toString();
 }
+
+export async function checkGMGN(tokenAddr) {
+  if (!KEY) return null;
+
+  const cached = cache.get(tokenAddr);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
+
+  try {
+    const sec = JSON.parse(runCLI('token security', tokenAddr));
+    const info = JSON.parse(runCLI('token info', tokenAddr));
+
+    const s = info.stat || {};
+    const d = info.dev || {};
+    const flags = [];
+
+    if (sec.is_honeypot) flags.push('HONEYPOT');
+    if (sec.is_blacklist) flags.push('BLACKLIST');
+    if (!sec.is_renounced) flags.push('NOT_RENOUNCED');
+    if (!sec.is_open_source) flags.push('UNVERIFIED');
+    if (n(sec.buy_tax) > 0 || n(sec.sell_tax) > 0) flags.push('TAX');
+    if (n(sec.high_tax) > 0) flags.push('HIGH_TAX');
+    if (d.creator_token_status === 'creator_hold') flags.push('DEV_HOLD');
+    if (n(s.creator_hold_rate) > 0) flags.push('DEV_HOLD');
+    if (n(s.top_10_holder_rate) > 0.5) flags.push('CONCENTRATED');
+    if (n(s.top_bundler_trader_percentage) > 0.3) flags.push('BUNDLED');
+    if (n(s.top70_sniper_hold_rate) > 0.1) flags.push('SNIPER_HEAVY');
+
+    const result = { flags, isRisky: flags.length > 0, holders: info.holder_count };
+    cache.set(tokenAddr, { data: result, ts: Date.now() });
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+export function getGMGNCache() { return cache; }
