@@ -18,7 +18,7 @@
 
 import 'dotenv/config';
 import fs from 'node:fs';
-import { Contract, Wallet, JsonRpcProvider, Network, parseEther, formatEther, MaxUint256, id as topicId, getAddress, AbiCoder } from 'ethers';
+import { Contract, Wallet, JsonRpcProvider, Network, parseEther, formatEther, MaxUint256, id as topicId, getAddress, AbiCoder, keccak256, toUtf8Bytes, dataSlice } from 'ethers';
 import { makeProvider } from './provider.js';
 import { CURVE_ABI, ERC20_ABI, PERMIT2_ABI, UNIVERSAL_ROUTER_ABI, QUOTER_ABI, buildV4Swap } from './abis.js';
 import { CURVE, V4, TOKEN, POOLS, UC } from './config.js';
@@ -65,6 +65,7 @@ function recordFail() {
 const bpsDown = (x, bps) => x - (x * bps) / 10000n;
 const keyTuple = (k) => [k.currency0, k.currency1, k.fee, k.tickSpacing, k.hooks];
 const deadline = () => BigInt(Math.floor(Date.now() / 1000) + 120);
+const coder = AbiCoder.defaultAbiCoder();
 
 function loadMarkets() {
   if (CFG.watchlist) {
@@ -114,8 +115,26 @@ async function main() {
   console.log(`markets: ${markets.map(m => `${m.symbol}(${m.pools.map(p => p.name).join('/')})`).join(', ')}`);
   console.log(`gate >= ${CFG.minProfitBps} bps | size [${formatEther(CFG.minSize)}, ${formatEther(CFG.maxSize)}] ETH\n`);
 
-  const v4Sell = (tok, key) => quoter.quoteExactInputSingle.staticCall([keyTuple(key), false, tok, '0x']).then(r => r[0]).catch(() => 0n);
-  const v4Buy  = (eth, key) => quoter.quoteExactInputSingle.staticCall([keyTuple(key), true, eth, '0x']).then(r => r[0]).catch(() => 0n);
+  // V4 Quoter uses revert-based quoting — cannot use staticCall directly.
+  // Instead, raw provider.call() + decode QuoteSwap(uint256) revert data.
+  const QUOTE_SIG = dataSlice(keccak256(toUtf8Bytes('quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes))')), 0, 4);
+  async function v4Quote(key, zeroForOne, exactAmount) {
+    const params = coder.encode(
+      ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,bytes)'],
+      [[keyTuple(key), zeroForOne, exactAmount, '0x']]
+    );
+    try {
+      await provider.call({ to: V4.quoter, data: QUOTE_SIG + params.slice(2) });
+    } catch (e) {
+      const raw = e?.data || e?.error?.data || '';
+      if (raw.startsWith('0x460adceb')) {
+        return coder.decode(['uint256'], '0x' + raw.slice(10))[0]; // QuoteSwap(uint256)
+      }
+    }
+    return 0n;
+  }
+  const v4Sell = (tok, key) => v4Quote(key, false, tok);
+  const v4Buy  = (eth, key) => v4Quote(key, true, eth);
 
   async function netA(m, ethIn) { // buy curve -> sell best V4 pool
     const tok = await curve.quoteBuy(m.token, ethIn).catch(() => 0n);
@@ -303,7 +322,6 @@ async function main() {
 
   // REAL-TIME: watch for NEW native-ETH V4 pools of active-curve tokens and add them live
   const initTopic = topicId('Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)');
-  const coder = AbiCoder.defaultAbiCoder();
   const knownPoolIds = new Set(watchedIds.map(x => x.toLowerCase()));
   async function onNewPool(log) {
     try {
