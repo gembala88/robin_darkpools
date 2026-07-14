@@ -57,9 +57,12 @@ async function getV4Tick(provider) {
 //   tickLower = currentTick  (position = 100% CASHCAT at entry price)
 //   tickUpper = currentTick + rangeTicks  (100% WETH when price goes up rangePct%)
 // rangePct = 20 means position exits when CASHCAT pumps 20%.
-function computeTickRange(currentTick, rangePct) {
+// Ticks are rounded down to nearest tickSpacing multiple.
+function computeTickRange(currentTick, rangePct, tickSpacing) {
   const rangeTicks = Math.floor(Math.log(1 + rangePct / 100) / Math.log(1.0001));
-  return { tickLower: currentTick, tickUpper: currentTick + rangeTicks };
+  const tickLower = currentTick - (currentTick % tickSpacing + tickSpacing) % tickSpacing;
+  const tickUpper = tickLower + Math.floor((rangeTicks + tickSpacing - 1) / tickSpacing) * tickSpacing;
+  return { tickLower, tickUpper };
 }
 
 // One-sided deposit: given amount0Desired (CASHCAT), compute liquidity at current tick
@@ -85,9 +88,12 @@ async function depositV3(provider, wallet, config) {
   if (!config.enableV3CashcatWeth) { console.log('  SKIPPED (disabled in config)'); return null; }
 
   const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
+  const factory = new Contract(V3.factory, ['function feeAmountTickSpacing(uint24) view returns (int24)'], provider);
+  const tickSpacing = Number(await factory.feeAmountTickSpacing(LP_V3_CASHCAT_WETH.fee));
 
   const currentTick = await getV3Tick(provider);
-  const { tickLower, tickUpper } = computeTickRange(currentTick, config.rangeDownPct);
+  const { tickLower, tickUpper } = computeTickRange(currentTick, config.rangeDownPct, tickSpacing);
+  console.log(`  Tick spacing: ${tickSpacing}, tickLower % spacing: ${tickLower % tickSpacing}, tickUpper % spacing: ${tickUpper % tickSpacing}`);
 
   // Get current sqrtPriceX96 from pool
   const slot0 = await provider.call({ to: LP_V3_CASHCAT_WETH.pool, data: '0x3850c7bd' });
@@ -98,7 +104,7 @@ async function depositV3(provider, wallet, config) {
   const cashcatBalance = await cashcat.balanceOf(walletAddr);
 
   console.log(`  Tick current: ${currentTick}`);
-  console.log(`  Range: ${tickLower} → ${tickUpper} (-${config.rangeDownPct}% → 0%)`);
+  console.log(`  Range: ${tickLower} → ${tickUpper} (0% → +${config.rangeDownPct}%)`);
   console.log(`  CASHCAT balance: ${formatEther(cashcatBalance)}`);
 
   // We need enough CASHCAT for the position (swap already happened)
