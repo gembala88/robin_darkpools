@@ -1,10 +1,9 @@
 import 'dotenv/config';
-import { Contract, Wallet, parseEther, formatEther, MaxUint256, AbiCoder, concat } from 'ethers';
+import { Contract, Wallet, parseEther, formatEther, MaxUint256 } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, LP_V3_CASHCAT_WETH } from './config.js';
 import { V3_SWAP_ROUTER_ABI, ERC20_ABI } from './abis.js';
 
-const abi = AbiCoder.defaultAbiCoder();
 const WETH = LP_V3_CASHCAT_WETH.token1;
 const CASHCAT = LP_V3_CASHCAT_WETH.token0;
 
@@ -20,19 +19,16 @@ async function main() {
   const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
   const addr = wallet.address;
 
-  const amount = parseEther(process.env.AMOUNT_ETH || '0.005');
+  // Use the 0.02 WETH we already have (from previous wraps)
+  // Don't wrap more — use existing WETH
+  const amount = parseEther('0.01'); // use 0.01 of the 0.02 WETH we have
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-
-  const weth = new Contract(WETH, WETH_ABI, wallet);
   const router = new Contract(V3.swapRouter02, V3_SWAP_ROUTER_ABI, wallet);
 
-  // Ensure approval
+  // Verify we still have approval
+  const weth = new Contract(WETH, WETH_ABI, wallet);
   const allowance = await weth.allowance(addr, V3.swapRouter02);
-  if (allowance < amount) {
-    console.log('Approving router...');
-    const appTx = await weth.approve(V3.swapRouter02, MaxUint256);
-    await appTx.wait();
-  }
+  console.log(`Allowance OK: ${allowance > 0n}`);
 
   // Quote
   const quoter = new Contract(V3.quoterV2, [
@@ -43,57 +39,59 @@ async function main() {
   console.log(`Quote: ${formatEther(amount)} WETH → ${formatEther(amountOut)} CASHCAT`);
   console.log(`Min out: ${formatEther(amountOutMin)} CASHCAT`);
 
-  // Approach 1: exactInput (single hop via bytes path)
-  console.log('\n--- Approach 1: exactInput ---');
-  const path = concat([WETH, abi.encode(['uint24'], [10000]), CASHCAT]);
+  // Approach A: exactInputSingle with msg.value = amount
+  console.log('\n--- Approach A: exactInputSingle + msg.value ---');
   try {
-    const tx1 = await router.exactInput(
-      [path, addr, deadline, amount, amountOutMin],
+    const gasEst = await router.exactInputSingle.estimateGas(
+      [WETH, CASHCAT, 10000, addr, deadline, amount, amountOutMin, 0n],
+      { value: amount }
+    );
+    console.log(`Gas est: ${gasEst}`);
+    const tx = await router.exactInputSingle(
+      [WETH, CASHCAT, 10000, addr, deadline, amount, amountOutMin, 0n],
+      { value: amount, gasLimit: gasEst * 120n / 100n }
+    );
+    const r = await tx.wait();
+    if (r.status === 1) {
+      console.log('SUCCESS');
+      const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
+      console.log(`CASHCAT: ${formatEther(await cashcat.balanceOf(addr))}`);
+      process.exit(0);
+    }
+  } catch (e) {
+    console.log(`Approach A failed: ${e.shortMessage || e.message}`);
+  }
+
+  // Approach B: exactInputSingle without msg.value (but with amount out = 0 to test)
+  console.log('\n--- Approach B: exactInputSingle, no value, minOut=0 ---');
+  try {
+    const tx = await router.exactInputSingle(
+      [WETH, CASHCAT, 10000, addr, deadline, amount, 0n, 0n],
       { value: 0n, gasLimit: 500000 }
     );
-    const r1 = await tx1.wait();
-    console.log(`Status: ${r1.status === 1 ? 'SUCCESS' : 'FAILED'}`);
-    if (r1.status === 1) {
-      const bal = await new Contract(CASHCAT, ERC20_ABI, provider).balanceOf(addr);
-      console.log(`CASHCAT: ${formatEther(bal)}`);
+    const r = await tx.wait();
+    console.log(`Status: ${r.status === 1 ? 'SUCCESS' : 'FAILED'}`);
+    if (r.status === 1) {
+      const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
+      console.log(`CASHCAT: ${formatEther(await cashcat.balanceOf(addr))}`);
       process.exit(0);
     }
   } catch (e) {
-    console.log(`exactInput failed: ${e.shortMessage || e.message}`);
+    console.log(`Approach B failed: ${e.shortMessage || e.message}`);
   }
 
-  // Approach 2: exactInputSingle as array (not object)
-  console.log('\n--- Approach 2: exactInputSingle (array params) ---');
+  // Approach C: Try calling the local `exactInputSingle` on the router via eth_estimateGas to get revert reason
+  console.log('\n--- Approach C: estimateGas to get revert reason ---');
   try {
-    const swapParams = [WETH, CASHCAT, 10000, addr, deadline, amount, amountOutMin, 0n];
-    const tx2 = await router.exactInputSingle(swapParams, { value: 0n, gasLimit: 500000 });
-    const r2 = await tx2.wait();
-    console.log(`Status: ${r2.status === 1 ? 'SUCCESS' : 'FAILED'}`);
-    if (r2.status === 1) {
-      const bal = await new Contract(CASHCAT, ERC20_ABI, provider).balanceOf(addr);
-      console.log(`CASHCAT: ${formatEther(bal)}`);
-      process.exit(0);
-    }
+    await router.exactInputSingle.estimateGas(
+      [WETH, CASHCAT, 10000, addr, deadline, amount, amountOutMin, 0n],
+      { value: 0n }
+    );
   } catch (e) {
-    console.log(`exactInputSingle failed: ${e.shortMessage || e.message}`);
-  }
-
-  // Approach 3: multicall wrapping exactInputSingle
-  console.log('\n--- Approach 3: multicall ---');
-  try {
-    const swapData = router.interface.encodeFunctionData('exactInputSingle', [
-      [WETH, CASHCAT, 10000, addr, deadline, amount, amountOutMin, 0n]
-    ]);
-    const tx3 = await router.multicall([swapData], { gasLimit: 500000 });
-    const r3 = await tx3.wait();
-    console.log(`Status: ${r3.status === 1 ? 'SUCCESS' : 'FAILED'}`);
-    if (r3.status === 1) {
-      const bal = await new Contract(CASHCAT, ERC20_ABI, provider).balanceOf(addr);
-      console.log(`CASHCAT: ${formatEther(bal)}`);
-      process.exit(0);
-    }
-  } catch (e) {
-    console.log(`multicall failed: ${e.shortMessage || e.message}`);
+    console.log(`Revert reason: ${e.reason || e.shortMessage || e.message}`);
+    // ethers v6 sometimes puts revert data in e.data or e.info
+    if (e.info?.error?.message) console.log(`Error msg: ${e.info.error.message}`);
+    if (e.code === 'CALL_EXCEPTION') console.log(`CALL_EXCEPTION data: ${e.data}`);
   }
 
   console.log('\nAll approaches failed');
