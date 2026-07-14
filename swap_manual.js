@@ -1,15 +1,15 @@
 import 'dotenv/config';
-import { Contract, Wallet, parseEther, formatEther, MaxUint256 } from 'ethers';
+import { Contract, Wallet, parseEther, formatEther, MaxUint256, AbiCoder, concat } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, LP_V3_CASHCAT_WETH } from './config.js';
 import { V3_SWAP_ROUTER_ABI, ERC20_ABI } from './abis.js';
 
+const abi = AbiCoder.defaultAbiCoder();
 const WETH = LP_V3_CASHCAT_WETH.token1;
 const CASHCAT = LP_V3_CASHCAT_WETH.token0;
 
 const WETH_ABI = [
   'function deposit() payable',
-  'function withdraw(uint256 wad)',
   'function approve(address guy, uint256 wad) returns (bool)',
   'function balanceOf(address) view returns (uint256)',
   'function allowance(address owner, address spender) view returns (uint256)',
@@ -21,80 +21,82 @@ async function main() {
   const addr = wallet.address;
 
   const amount = parseEther(process.env.AMOUNT_ETH || '0.005');
-  const slippagePct = BigInt(process.env.SLIPPAGE_PCT || '1');
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
 
   const weth = new Contract(WETH, WETH_ABI, wallet);
   const router = new Contract(V3.swapRouter02, V3_SWAP_ROUTER_ABI, wallet);
-  const cashcat = new Contract(CASHCAT, ERC20_ABI, wallet);
 
-  console.log(`Wallet: ${addr}`);
-  console.log(`Amount: ${formatEther(amount)} ETH`);
-
-  // 1. Wrap ETH → WETH
-  console.log('\n--- Step 1: Wrap ETH → WETH ---');
-  const wethBalBefore = await weth.balanceOf(addr);
-  console.log(`WETH before: ${formatEther(wethBalBefore)}`);
-  const wrapTx = await weth.deposit({ value: amount });
-  console.log(`Wrap tx: ${wrapTx.hash}`);
-  await wrapTx.wait();
-  const wethBalAfter = await weth.balanceOf(addr);
-  console.log(`WETH after: ${formatEther(wethBalAfter)}`);
-
-  // 2. Approve SwapRouter02
-  console.log('\n--- Step 2: Approve SwapRouter02 ---');
+  // Ensure approval
   const allowance = await weth.allowance(addr, V3.swapRouter02);
-  console.log(`Allowance before: ${formatEther(allowance)}`);
   if (allowance < amount) {
+    console.log('Approving router...');
     const appTx = await weth.approve(V3.swapRouter02, MaxUint256);
-    console.log(`Approve tx: ${appTx.hash}`);
     await appTx.wait();
-    console.log('Approved.');
   }
 
-  // 3. Quote swap
-  console.log('\n--- Step 3: Quote WETH → CASHCAT ---');
+  // Quote
   const quoter = new Contract(V3.quoterV2, [
     'function quoteExactInputSingle(tuple(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
   ], provider);
   const [amountOut] = await quoter.quoteExactInputSingle.staticCall([WETH, CASHCAT, amount, 10000, 0]);
-  const amountOutMin = amountOut - (amountOut * slippagePct) / 100n;
-  console.log(`Expected: ${formatEther(amount)} WETH → ${formatEther(amountOut)} CASHCAT`);
-  console.log(`Min (${slippagePct}% slip): ${formatEther(amountOutMin)} CASHCAT`);
+  const amountOutMin = amountOut - (amountOut * 1n) / 100n;
+  console.log(`Quote: ${formatEther(amount)} WETH → ${formatEther(amountOut)} CASHCAT`);
+  console.log(`Min out: ${formatEther(amountOutMin)} CASHCAT`);
 
-  // 4. Execute swap
-  console.log('\n--- Step 4: Execute swap ---');
-  const swapParams = {
-    tokenIn: WETH,
-    tokenOut: CASHCAT,
-    fee: 10000,
-    recipient: addr,
-    deadline,
-    amountIn: amount,
-    amountOutMinimum: amountOutMin,
-    sqrtPriceLimitX96: 0,
-  };
-
-  const swapTx = await router.exactInputSingle(swapParams, { value: 0n });
-  console.log(`Swap tx: ${swapTx.hash}`);
-  const receipt = await swapTx.wait();
-  console.log(`Status: ${receipt.status === 1 ? 'SUCCESS' : 'FAILED'}`);
-
-  // If direct call failed, try multicall
-  if (receipt.status === 0) {
-    console.log('\nDirect call failed — retrying via multicall...');
-    const swapData = router.interface.encodeFunctionData('exactInputSingle', [swapParams]);
-    const tx2 = await router.multicall([swapData]);
-    const r2 = await tx2.wait();
-    console.log(`Multicall status: ${r2.status === 1 ? 'SUCCESS' : 'FAILED'}`);
+  // Approach 1: exactInput (single hop via bytes path)
+  console.log('\n--- Approach 1: exactInput ---');
+  const path = concat([WETH, abi.encode(['uint24'], [10000]), CASHCAT]);
+  try {
+    const tx1 = await router.exactInput(
+      [path, addr, deadline, amount, amountOutMin],
+      { value: 0n, gasLimit: 500000 }
+    );
+    const r1 = await tx1.wait();
+    console.log(`Status: ${r1.status === 1 ? 'SUCCESS' : 'FAILED'}`);
+    if (r1.status === 1) {
+      const bal = await new Contract(CASHCAT, ERC20_ABI, provider).balanceOf(addr);
+      console.log(`CASHCAT: ${formatEther(bal)}`);
+      process.exit(0);
+    }
+  } catch (e) {
+    console.log(`exactInput failed: ${e.shortMessage || e.message}`);
   }
 
-  // 5. Check balances
-  console.log('\n--- Final Balances ---');
-  const wethBal = await weth.balanceOf(addr);
-  const cashcatBal = await cashcat.balanceOf(addr);
-  console.log(`WETH: ${formatEther(wethBal)}`);
-  console.log(`CASHCAT: ${formatEther(cashcatBal)}`);
+  // Approach 2: exactInputSingle as array (not object)
+  console.log('\n--- Approach 2: exactInputSingle (array params) ---');
+  try {
+    const swapParams = [WETH, CASHCAT, 10000, addr, deadline, amount, amountOutMin, 0n];
+    const tx2 = await router.exactInputSingle(swapParams, { value: 0n, gasLimit: 500000 });
+    const r2 = await tx2.wait();
+    console.log(`Status: ${r2.status === 1 ? 'SUCCESS' : 'FAILED'}`);
+    if (r2.status === 1) {
+      const bal = await new Contract(CASHCAT, ERC20_ABI, provider).balanceOf(addr);
+      console.log(`CASHCAT: ${formatEther(bal)}`);
+      process.exit(0);
+    }
+  } catch (e) {
+    console.log(`exactInputSingle failed: ${e.shortMessage || e.message}`);
+  }
+
+  // Approach 3: multicall wrapping exactInputSingle
+  console.log('\n--- Approach 3: multicall ---');
+  try {
+    const swapData = router.interface.encodeFunctionData('exactInputSingle', [
+      [WETH, CASHCAT, 10000, addr, deadline, amount, amountOutMin, 0n]
+    ]);
+    const tx3 = await router.multicall([swapData], { gasLimit: 500000 });
+    const r3 = await tx3.wait();
+    console.log(`Status: ${r3.status === 1 ? 'SUCCESS' : 'FAILED'}`);
+    if (r3.status === 1) {
+      const bal = await new Contract(CASHCAT, ERC20_ABI, provider).balanceOf(addr);
+      console.log(`CASHCAT: ${formatEther(bal)}`);
+      process.exit(0);
+    }
+  } catch (e) {
+    console.log(`multicall failed: ${e.shortMessage || e.message}`);
+  }
+
+  console.log('\nAll approaches failed');
 }
 
-main().catch(e => { console.error('FAILED:', e.shortMessage || e.message); process.exit(1); });
+main().catch(e => console.error('FATAL:', e.shortMessage || e.message));
