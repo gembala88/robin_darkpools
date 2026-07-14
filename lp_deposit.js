@@ -125,11 +125,20 @@ async function depositV3(provider, wallet, config) {
 
   const nfpm = new Contract(V3.nfpm, V3_NFPM_ABI, wallet);
 
-  // Approve NFPM to spend CASHCAT if needed
-  const allowance = await cashcat.allowance(wallet.address, V3.nfpm);
-  if (allowance < amount0Desired) {
+  // Approve NFPM to spend CASHCAT and WETH if needed
+  const cashcatAllowance = await cashcat.allowance(wallet.address, V3.nfpm);
+  if (cashcatAllowance < amount0Desired) {
     console.log('  Approving CASHCAT for V3 NFPM...');
     const tx = await cashcat.approve.populateTransaction(V3.nfpm, MaxUint256);
+    const app = await wallet.sendTransaction(tx);
+    await app.wait();
+    console.log(`  Approve tx: ${app.hash}`);
+  }
+  const weth = new Contract(WETH, ERC20_ABI, wallet);
+  const wethAllowance = await weth.allowance(wallet.address, V3.nfpm);
+  if (wethAllowance < amount1Desired) {
+    console.log('  Approving WETH for V3 NFPM...');
+    const tx = await weth.approve.populateTransaction(V3.nfpm, MaxUint256);
     const app = await wallet.sendTransaction(tx);
     await app.wait();
     console.log(`  Approve tx: ${app.hash}`);
