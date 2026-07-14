@@ -118,6 +118,7 @@ async function main() {
   // V4 Quoter uses revert-based quoting — cannot use staticCall directly.
   // Instead, raw provider.call() + decode QuoteSwap(uint256) revert data.
   const QUOTE_SIG = dataSlice(keccak256(toUtf8Bytes('quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes))')), 0, 4);
+  const QUOTE_ERR_SIG = dataSlice(keccak256(toUtf8Bytes('QuoteSwap(uint256)')), 0, 4);
   async function v4Quote(key, zeroForOne, exactAmount) {
     const params = coder.encode(
       ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,bytes)'],
@@ -127,8 +128,8 @@ async function main() {
       await provider.call({ to: V4.quoter, data: QUOTE_SIG + params.slice(2) });
     } catch (e) {
       const raw = e?.data || e?.error?.data || '';
-      if (raw.startsWith('0x460adceb')) {
-        return coder.decode(['uint256'], '0x' + raw.slice(10))[0]; // QuoteSwap(uint256)
+      if (raw.startsWith(QUOTE_ERR_SIG)) {
+        return coder.decode(['uint256'], '0x' + raw.slice(10))[0];
       }
     }
     return 0n;
