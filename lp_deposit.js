@@ -104,7 +104,7 @@ async function depositV3(provider, wallet, config) {
   // We need enough CASHCAT for the position (swap already happened)
   // MintParams: token0, token1, fee, tickLower, tickUpper, amount0Desired, amount1Desired, amount0Min, amount1Min, recipient, deadline
   const amount0Desired = cashcatBalance; // deposit ALL available CASHCAT
-  const amount1Desired = 0n; // one-sided (only CASHCAT)
+  const amount1Desired = 1n; // 1 wei WETH to handle tick-boundary edge case
 
   const slippagePct = BigInt(config.slippagePct);
   const amount0Min = amount0Desired - (amount0Desired * slippagePct) / 100n;
