@@ -75,14 +75,19 @@ async function main() {
     sqrtPriceLimitX96: 0,
   };
 
-  // Use staticCall first to simulate
-  const sim = await router.exactInputSingle.staticCall(swapParams, { value: 0n });
-  console.log(`Simulation OK — will receive ${formatEther(sim)} CASHCAT`);
-
   const swapTx = await router.exactInputSingle(swapParams, { value: 0n });
   console.log(`Swap tx: ${swapTx.hash}`);
   const receipt = await swapTx.wait();
   console.log(`Status: ${receipt.status === 1 ? 'SUCCESS' : 'FAILED'}`);
+
+  // If direct call failed, try multicall
+  if (receipt.status === 0) {
+    console.log('\nDirect call failed — retrying via multicall...');
+    const swapData = router.interface.encodeFunctionData('exactInputSingle', [swapParams]);
+    const tx2 = await router.multicall([swapData]);
+    const r2 = await tx2.wait();
+    console.log(`Multicall status: ${r2.status === 1 ? 'SUCCESS' : 'FAILED'}`);
+  }
 
   // 5. Check balances
   console.log('\n--- Final Balances ---');
