@@ -53,10 +53,13 @@ async function getV4Tick(provider) {
   return Number(tick);
 }
 
-// Compute tick range: [currentTick + offset, currentTick]
-function computeTickRange(currentTick, downPct) {
-  const offset = Math.floor(Math.log(1 - downPct / 100) / Math.log(1.0001));
-  return { tickLower: currentTick + offset, tickUpper: currentTick };
+// Compute tick range for one-sided CASHCAT deposit:
+//   tickLower = currentTick  (position = 100% CASHCAT at entry price)
+//   tickUpper = currentTick + rangeTicks  (100% WETH when price goes up rangePct%)
+// rangePct = 20 means position exits when CASHCAT pumps 20%.
+function computeTickRange(currentTick, rangePct) {
+  const rangeTicks = Math.floor(Math.log(1 + rangePct / 100) / Math.log(1.0001));
+  return { tickLower: currentTick, tickUpper: currentTick + rangeTicks };
 }
 
 // One-sided deposit: given amount0Desired (CASHCAT), compute liquidity at current tick
