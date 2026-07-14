@@ -19,82 +19,68 @@ async function main() {
   const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
   const addr = wallet.address;
 
-  // Use the 0.02 WETH we already have (from previous wraps)
-  // Don't wrap more — use existing WETH
-  const amount = parseEther('0.01'); // use 0.01 of the 0.02 WETH we have
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-  const router = new Contract(V3.swapRouter02, V3_SWAP_ROUTER_ABI, wallet);
+  const amount = parseEther(process.env.AMOUNT_ETH || '0.005');
+  const slippagePct = BigInt(process.env.SLIPPAGE_PCT || '1');
 
-  // Verify we still have approval
   const weth = new Contract(WETH, WETH_ABI, wallet);
-  const allowance = await weth.allowance(addr, V3.swapRouter02);
-  console.log(`Allowance OK: ${allowance > 0n}`);
+  const router = new Contract(V3.swapRouter02, V3_SWAP_ROUTER_ABI, wallet);
+  const cashcat = new Contract(CASHCAT, ERC20_ABI, wallet);
 
-  // Quote
+  console.log(`Wallet: ${addr}`);
+  console.log(`Amount: ${formatEther(amount)} ETH`);
+
+  // 1. Wrap ETH → WETH
+  console.log('\n--- Step 1: Wrap ETH → WETH ---');
+  const wethBalBefore = await weth.balanceOf(addr);
+  console.log(`WETH before: ${formatEther(wethBalBefore)}`);
+  const wrapTx = await weth.deposit({ value: amount });
+  console.log(`Wrap tx: ${wrapTx.hash}`);
+  await wrapTx.wait();
+  const wethBalAfter = await weth.balanceOf(addr);
+  console.log(`WETH after: ${formatEther(wethBalAfter)}`);
+
+  // 2. Approve SwapRouter02
+  console.log('\n--- Step 2: Approve SwapRouter02 ---');
+  const allowance = await weth.allowance(addr, V3.swapRouter02);
+  if (allowance < amount) {
+    const appTx = await weth.approve(V3.swapRouter02, MaxUint256);
+    console.log(`Approve tx: ${appTx.hash}`);
+    await appTx.wait();
+    console.log('Approved.');
+  } else {
+    console.log('Allowance OK');
+  }
+
+  // 3. Quote swap
+  console.log('\n--- Step 3: Quote WETH → CASHCAT ---');
   const quoter = new Contract(V3.quoterV2, [
     'function quoteExactInputSingle(tuple(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
   ], provider);
   const [amountOut] = await quoter.quoteExactInputSingle.staticCall([WETH, CASHCAT, amount, 10000, 0]);
-  const amountOutMin = amountOut - (amountOut * 1n) / 100n;
-  console.log(`Quote: ${formatEther(amount)} WETH → ${formatEther(amountOut)} CASHCAT`);
-  console.log(`Min out: ${formatEther(amountOutMin)} CASHCAT`);
+  const amountOutMin = amountOut - (amountOut * slippagePct) / 100n;
+  console.log(`Expected: ${formatEther(amount)} WETH → ${formatEther(amountOut)} CASHCAT`);
+  console.log(`Min (${slippagePct}% slip): ${formatEther(amountOutMin)} CASHCAT`);
 
-  // Approach A: exactInputSingle with msg.value = amount
-  console.log('\n--- Approach A: exactInputSingle + msg.value ---');
-  try {
-    const gasEst = await router.exactInputSingle.estimateGas(
-      [WETH, CASHCAT, 10000, addr, deadline, amount, amountOutMin, 0n],
-      { value: amount }
-    );
-    console.log(`Gas est: ${gasEst}`);
-    const tx = await router.exactInputSingle(
-      [WETH, CASHCAT, 10000, addr, deadline, amount, amountOutMin, 0n],
-      { value: amount, gasLimit: gasEst * 120n / 100n }
-    );
-    const r = await tx.wait();
-    if (r.status === 1) {
-      console.log('SUCCESS');
-      const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
-      console.log(`CASHCAT: ${formatEther(await cashcat.balanceOf(addr))}`);
-      process.exit(0);
-    }
-  } catch (e) {
-    console.log(`Approach A failed: ${e.shortMessage || e.message}`);
-  }
+  // 4. Execute swap (CORRECT struct — Robinhood fork has NO deadline param)
+  console.log('\n--- Step 4: Execute swap ---');
+  // FIXED: ExactInputSingleParams = (tokenIn, tokenOut, fee, recipient, amountIn, amountOutMinimum, sqrtPriceLimitX96)
+  const swapParams = [WETH, CASHCAT, 10000, addr, amount, amountOutMin, 0n];
 
-  // Approach B: exactInputSingle without msg.value (but with amount out = 0 to test)
-  console.log('\n--- Approach B: exactInputSingle, no value, minOut=0 ---');
-  try {
-    const tx = await router.exactInputSingle(
-      [WETH, CASHCAT, 10000, addr, deadline, amount, 0n, 0n],
-      { value: 0n, gasLimit: 500000 }
-    );
-    const r = await tx.wait();
-    console.log(`Status: ${r.status === 1 ? 'SUCCESS' : 'FAILED'}`);
-    if (r.status === 1) {
-      const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
-      console.log(`CASHCAT: ${formatEther(await cashcat.balanceOf(addr))}`);
-      process.exit(0);
-    }
-  } catch (e) {
-    console.log(`Approach B failed: ${e.shortMessage || e.message}`);
-  }
+  // Simulate via estimateGas (staticCall would fail since it modifies state)
+  const gasEst = await router.exactInputSingle.estimateGas(swapParams, { value: 0n });
+  console.log(`Gas estimate: ${gasEst}`);
 
-  // Approach C: Try calling the local `exactInputSingle` on the router via eth_estimateGas to get revert reason
-  console.log('\n--- Approach C: estimateGas to get revert reason ---');
-  try {
-    await router.exactInputSingle.estimateGas(
-      [WETH, CASHCAT, 10000, addr, deadline, amount, amountOutMin, 0n],
-      { value: 0n }
-    );
-  } catch (e) {
-    console.log(`Revert reason: ${e.reason || e.shortMessage || e.message}`);
-    // ethers v6 sometimes puts revert data in e.data or e.info
-    if (e.info?.error?.message) console.log(`Error msg: ${e.info.error.message}`);
-    if (e.code === 'CALL_EXCEPTION') console.log(`CALL_EXCEPTION data: ${e.data}`);
-  }
+  const swapTx = await router.exactInputSingle(swapParams, { value: 0n, gasLimit: gasEst * 120n / 100n });
+  console.log(`Swap tx: ${swapTx.hash}`);
+  const receipt = await swapTx.wait();
+  console.log(`Status: ${receipt.status === 1 ? 'SUCCESS' : 'FAILED'}`);
 
-  console.log('\nAll approaches failed');
+  // 5. Check balances
+  console.log('\n--- Final Balances ---');
+  const wethBal = await weth.balanceOf(addr);
+  const cashcatBal = await cashcat.balanceOf(addr);
+  console.log(`WETH: ${formatEther(wethBal)}`);
+  console.log(`CASHCAT: ${formatEther(cashcatBal)}`);
 }
 
-main().catch(e => console.error('FATAL:', e.shortMessage || e.message));
+main().catch(e => { console.error('FAILED:', e.shortMessage || e.message); process.exit(1); });

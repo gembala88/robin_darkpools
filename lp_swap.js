@@ -37,17 +37,8 @@ async function simulateV4Swap(provider, ethAmount) {
 
 async function buildV3SwapTx(wallet, ethAmount, cashcatAmountMin) {
   const router = new Contract(V3.swapRouter02, V3_SWAP_ROUTER_ABI, wallet);
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-  const params = {
-    tokenIn: NATIVE,
-    tokenOut: CASHCAT,
-    fee: 10000,
-    recipient: wallet.address,
-    deadline,
-    amountIn: ethAmount,
-    amountOutMinimum: cashcatAmountMin,
-    sqrtPriceLimitX96: 0,
-  };
+  // FIXED: Robinhood fork's ExactInputSingleParams has NO deadline
+  const params = [NATIVE, CASHCAT, 10000, wallet.address, ethAmount, cashcatAmountMin, 0n];
   const tx = await router.exactInputSingle.populateTransaction(params);
   tx.value = ethAmount;
   return tx;

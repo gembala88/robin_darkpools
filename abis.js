@@ -42,11 +42,18 @@ export const STATEVIEW_ABI = [
   'function getLiquidity(bytes32 poolId) view returns (uint128 liquidity)',
 ];
 
-// --- V3 SwapRouter02 ABI ---
+// --- V3 SwapRouter02 ABI (verified from Blockscout — Robinhood Chain fork) ---
+// NOTE: The Robinhood fork uses a non-standard IV3SwapRouter with no `deadline`
+// in ExactInputSingleParams or ExactInputParams. All structs omit `deadline`.
 export const V3_SWAP_ROUTER_ABI = [
-  'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountOut)',
+  'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountOut)',
+  'function exactInput(tuple(bytes path, address recipient, uint256 amountIn, uint256 amountOutMinimum) params) payable returns (uint256 amountOut)',
+  'function multicall(bytes[] data) payable returns (bytes[] results)',
+  'function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to) payable returns (uint256 amountOut)',
   'function WETH9() view returns (address)',
   'function factory() view returns (address)',
+  'function unwrapWETH9(uint256 amountMinimum, address recipient) payable',
+  'function refundETH() payable',
 ];
 
 // --- V3 QuoterV2 ABI (for simulations) ---
