@@ -39,7 +39,7 @@ async function buildV3SwapTx(wallet, ethAmount, cashcatAmountMin) {
   const router = new Contract(V3.swapRouter02, V3_SWAP_ROUTER_ABI, wallet);
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
   const params = {
-    tokenIn: WETH,
+    tokenIn: NATIVE,
     tokenOut: CASHCAT,
     fee: 10000,
     recipient: wallet.address,
