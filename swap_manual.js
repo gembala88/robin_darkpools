@@ -12,6 +12,7 @@ const WETH_ABI = [
   'function withdraw(uint256 wad)',
   'function approve(address guy, uint256 wad) returns (bool)',
   'function balanceOf(address) view returns (uint256)',
+  'function allowance(address owner, address spender) view returns (uint256)',
 ];
 
 async function main() {
