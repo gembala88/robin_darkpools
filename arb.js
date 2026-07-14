@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import { Contract, Wallet, JsonRpcProvider, Network, parseEther, formatEther, MaxUint256, id as topicId, getAddress, AbiCoder } from 'ethers';
 import { makeProvider } from './provider.js';
 import { CURVE_ABI, ERC20_ABI, PERMIT2_ABI, UNIVERSAL_ROUTER_ABI, QUOTER_ABI, buildV4Swap } from './abis.js';
-import { CURVE, V4, TOKEN, POOLS } from './config.js';
+import { CURVE, V4, TOKEN, POOLS, UC } from './config.js';
 import { notifyStartup, notifyBuy, notifySell, notifyAtomic, notifyError, parseSwap, tg, tgEnabled } from './telegram.js';
 
 const EXECUTOR_ABI = [
@@ -35,15 +35,16 @@ const CFG = {
   minProfitBps: BigInt(process.env.MIN_PROFIT_BPS || 150),
   slippageBps: BigInt(process.env.SLIPPAGE_BPS || 100),
   pollMs: Number(process.env.POLL_MS || 3000),
-  gasUnits: BigInt(process.env.GAS_UNITS || 700000),
+  gasUnits: BigInt(process.env.GAS_UNITS || UC('gasUnits')),
   iters: Number(process.env.TERNARY_ITERS || 12),
   live: process.env.LIVE === '1',
   executor: process.env.EXECUTOR_ADDR || null,
   watchlist: process.env.WATCHLIST === '1',
+  eoaFallback: UC('eoaFallbackEnabled'),
 };
 
-// ===== CIRCUIT BREAKER =====
-const CB = { fails: 0, paused: false, pausedAt: 0, maxFails: Number(process.env.MAX_CONSECUTIVE_FAILS || 3), cooldownMin: Number(process.env.CIRCUIT_BREAKER_COOLDOWN_MIN || 30) };
+// ===== CIRCUIT BREAKER (reads from user-config.json, env can override) =====
+const CB = { fails: 0, paused: false, pausedAt: 0, maxFails: Number(process.env.MAX_CONSECUTIVE_FAILS || UC('maxConsecutiveFails')), cooldownMin: Number(process.env.CIRCUIT_BREAKER_COOLDOWN_MIN || UC('circuitBreakerCooldownMin')) };
 async function checkCircuitBreaker() {
   if (!CB.paused) return true;
   if (Date.now() - CB.pausedAt > CB.cooldownMin * 60 * 1000) {
@@ -104,6 +105,11 @@ async function main() {
   let gasCost = gasPrice * CFG.gasUnits;
 
   console.log(`\nRobinFun<->UniV4 arb | ${CFG.live ? 'LIVE' : 'DRY-RUN'} | ${executor ? 'ATOMIC' : 'EOA'} | ${CFG.watchlist ? 'WATCHLIST' : 'single'}`);
+  if (!CFG.executor && !CFG.eoaFallback) {
+    console.error('FATAL: EOA fallback disabled (eoaFallbackEnabled=false) and no EXECUTOR_ADDR set.');
+    process.exit(1);
+  }
+  if (!CFG.executor && CFG.eoaFallback) console.log('EOA fallback: ENABLED (2-tx mode)');
   console.log(`wallet: ${wallet ? wallet.address : '(monitor only)'}`);
   console.log(`markets: ${markets.map(m => `${m.symbol}(${m.pools.map(p => p.name).join('/')})`).join(', ')}`);
   console.log(`gate >= ${CFG.minProfitBps} bps | size [${formatEther(CFG.minSize)}, ${formatEther(CFG.maxSize)}] ETH\n`);
@@ -227,9 +233,14 @@ async function main() {
     await notifySell({ symbol: b.market.symbol, venue: 'curve', tokens: got, ethOut: qSell, hash: sellRc.hash });
   }
 
-  let busy = false, lastLog = 0;
+  let busy = false, lastLog = 0, lastGasRefresh = 0;
   async function tick(trigger = 'poll') {
     if (busy) return;
+    // Refresh gas price every 15s so profit calcuses current on-chain cost
+    if (Date.now() - lastGasRefresh > 15000) {
+      const fd = await provider.getFeeData().catch(() => null);
+      if (fd) { gasCost = (fd.gasPrice ?? fd.maxFeePerGas ?? 100000000n) * CFG.gasUnits; lastGasRefresh = Date.now(); }
+    }
     const all = await scanAll();
     if (!all.length) return;
     const b = all[0];

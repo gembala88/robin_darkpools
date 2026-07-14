@@ -56,5 +56,7 @@
 
   "--- ARB BOT (shared) ---": "Used by arb.js, not screener.js",
   "maxConsecutiveFails": 3,
-  "circuitBreakerCooldownMin": 30
+  "circuitBreakerCooldownMin": 30,
+  "gasUnits": 700000,
+  "eoaFallbackEnabled": false
 }
