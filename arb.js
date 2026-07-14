@@ -115,24 +115,33 @@ async function main() {
   console.log(`markets: ${markets.map(m => `${m.symbol}(${m.pools.map(p => p.name).join('/')})`).join(', ')}`);
   console.log(`gate >= ${CFG.minProfitBps} bps | size [${formatEther(CFG.minSize)}, ${formatEther(CFG.maxSize)}] ETH\n`);
 
-  // V4 Quoter uses revert-based quoting — cannot use staticCall directly.
-  // Instead, raw provider.call() + decode QuoteSwap(uint256) revert data.
-  const QUOTE_SIG = dataSlice(keccak256(toUtf8Bytes('quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes))')), 0, 4);
-  const QUOTE_ERR_SIG = dataSlice(keccak256(toUtf8Bytes('QuoteSwap(uint256)')), 0, 4);
+  // V4 Quoter uses revert-based unlock/callback pattern which doesn't work via
+  // eth_call on Robinhood Chain. Instead, compute quotes from pool state directly
+  // via the StateView contract (view functions, always safe to call).
+  const STATE_VIEW = V4.stateView;
+  const SLOT0_SIG = dataSlice(keccak256(toUtf8Bytes('getSlot0(bytes32)')), 0, 4);
+  const LIQ_SIG = dataSlice(keccak256(toUtf8Bytes('getLiquidity(bytes32)')), 0, 4);
+  const Q192 = (1n << 96n) * (1n << 96n);
   async function v4Quote(key, zeroForOne, exactAmount) {
-    const params = coder.encode(
-      ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,bytes)'],
-      [[keyTuple(key), zeroForOne, exactAmount, '0x']]
-    );
+    const pid = keccak256(coder.encode(['(address,address,uint24,int24,address)'], [keyTuple(key)]));
     try {
-      await provider.call({ to: V4.quoter, data: QUOTE_SIG + params.slice(2) });
-    } catch (e) {
-      const raw = e?.data || e?.error?.data || '';
-      if (raw.startsWith(QUOTE_ERR_SIG)) {
-        return coder.decode(['uint256'], '0x' + raw.slice(10))[0];
+      const [slot0, liq] = await Promise.all([
+        provider.call({ to: STATE_VIEW, data: SLOT0_SIG + coder.encode(['bytes32'], [pid]).slice(2) }),
+        provider.call({ to: STATE_VIEW, data: LIQ_SIG + coder.encode(['bytes32'], [pid]).slice(2) }),
+      ]);
+      const [sqrtP, , , lpFee] = coder.decode(['uint160', 'int24', 'uint24', 'uint24'], slot0);
+      const [liquidity] = coder.decode(['uint128'], liq);
+      if (liquidity === 0n) return 0n;
+      const feeBps = BigInt(lpFee) / 100n;
+      const amountAfterFee = BigInt(exactAmount) * (10000n - feeBps) / 10000n;
+      if (zeroForOne) {
+        // sell token0 (ETH) -> token1 (RH6900): amount1 = amount0 * factor * sqrtP^2 / 2^192
+        return amountAfterFee * BigInt(sqrtP) * BigInt(sqrtP) / Q192;
+      } else {
+        // sell token1 (RH6900) -> token0 (ETH): amount0 = amount1 * factor * 2^192 / sqrtP^2
+        return amountAfterFee * Q192 / (BigInt(sqrtP) * BigInt(sqrtP));
       }
-    }
-    return 0n;
+    } catch { return 0n; }
   }
   const v4Sell = (tok, key) => v4Quote(key, false, tok);
   const v4Buy  = (eth, key) => v4Quote(key, true, eth);
