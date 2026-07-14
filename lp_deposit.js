@@ -169,12 +169,15 @@ async function depositV3(provider, wallet, config) {
   console.log(`  Mint tx: ${tx.hash}`);
   const receipt = await tx.wait();
 
-  // Parse tokenId from Mint event
-  const mintEvent = nfpm.interface.parseLog({
-    topics: receipt.logs.find(l => l.address.toLowerCase() === V3.nfpm.toLowerCase()).topics,
-    data: receipt.logs.find(l => l.address.toLowerCase() === V3.nfpm.toLowerCase()).data,
-  });
-  const tokenId = mintEvent?.args?.tokenId;
+  // Parse tokenId from Transfer event (from=0x0 → wallet)
+  const nfpmLogs = receipt.logs.filter(l => l.address.toLowerCase() === V3.nfpm.toLowerCase());
+  let tokenId = null;
+  for (const log of nfpmLogs) {
+    if (log.topics[0] === '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef' && log.topics[1] === '0x0000000000000000000000000000000000000000000000000000000000000000') {
+      tokenId = BigInt(log.topics[3]).toString();
+      break;
+    }
+  }
   console.log(`  Token ID: ${tokenId}`);
 
   const position = { dex: 'V3', pool: LP_V3_CASHCAT_WETH.symbol, tokenId: tokenId?.toString(),
