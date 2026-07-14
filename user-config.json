@@ -58,7 +58,7 @@
   "maxConsecutiveFails": 3,
   "circuitBreakerCooldownMin": 30,
   "gasUnits": 700000,
-  "eoaFallbackEnabled": false,
+  "eoaFallbackEnabled": true,
 
   "--- LP DEPOSIT/WITHDRAW ---": "All settings for V3+V4 LP positions",
   "lp": {
