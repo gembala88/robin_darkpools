@@ -116,6 +116,8 @@ async function depositV3(provider, wallet, config) {
   const amount0Desired = cashcatBalance;
   const amount1Desired = wethBalance;
   const slippagePct = BigInt(config.slippagePct);
+  const amount0Min = amount0Desired - (amount0Desired * slippagePct) / 100n;
+  const amount1Min = amount1Desired - (amount1Desired * slippagePct) / 100n;
   const deadline = BigInt(Math.floor(Date.now() / 1000) + config.deadlineSec);
 
   // Detailed liquidity debug
@@ -133,12 +135,6 @@ async function depositV3(provider, wallet, config) {
   } else {
     implied0 = expectedLiquidity * (sqrtPbX96 - sqrtPX96) * Q96 / (sqrtPX96 * sqrtPbX96);
   }
-  // FIX (jangan hilang lagi!): amountMin dari IMPLIED (jumlah nyata dipakai liquidity L),
-  // BUKAN dari amountDesired mentah -- kalau salah satu sisi jadi pembatas, amountMin
-  // dari input penuh selalu > implied amount, bikin mint SELALU revert "Price slippage check".
-  // TERBUKTI dengan tx nyata: mint #125115 sukses SETELAH fix ini diterapkan.
-  const amount0Min = implied0 - (implied0 * slippagePct) / 100n;
-  const amount1Min = implied1 - (implied1 * slippagePct) / 100n;
   console.log(`  sqrtPaX96: ${sqrtPaX96}`);
   console.log(`  sqrtPbX96: ${sqrtPbX96}`);
   console.log(`  sqrtPX96:  ${sqrtPX96}`);
