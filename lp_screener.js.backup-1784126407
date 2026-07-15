@@ -83,10 +83,7 @@ async function discoverV3Pools(provider, fromBlock, toBlock) {
   for (let s = fromBlock; s <= toBlock; s += step) {
     const e = Math.min(s + step - 1, toBlock);
     try {
-      const logs = await Promise.race([
-        provider.getLogs({ address: V3_FACTORY, topics: [V3_POOL_CREATED], fromBlock: s, toBlock: e }),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('getLogs timeout 15s')), 15000))
-      ]);
+      const logs = await provider.getLogs({ address: V3_FACTORY, topics: [V3_POOL_CREATED], fromBlock: s, toBlock: e });
       for (const lg of logs) {
         const token0 = getAddress('0x' + lg.topics[1].slice(26));
         const token1 = getAddress('0x' + lg.topics[2].slice(26));
@@ -108,10 +105,7 @@ async function discoverV4Pools(provider, fromBlock, toBlock) {
   for (let s = fromBlock; s <= toBlock; s += step) {
     const e = Math.min(s + step - 1, toBlock);
     try {
-      const logs = await Promise.race([
-        provider.getLogs({ address: V4_POOLMANAGER, topics: [V4_INITIALIZE], fromBlock: s, toBlock: e }),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('getLogs timeout 15s')), 15000))
-      ]);
+      const logs = await provider.getLogs({ address: V4_POOLMANAGER, topics: [V4_INITIALIZE], fromBlock: s, toBlock: e });
       for (const lg of logs) {
         const currency0 = getAddress('0x' + lg.topics[2].slice(26));
         const currency1 = getAddress('0x' + lg.topics[3].slice(26));
