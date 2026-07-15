@@ -61,6 +61,17 @@ function recordFail() {
     notifyError(`Circuit breaker active — ${CB.fails} consecutive tx failures. Auto-reset in ${CB.cooldownMin}min.`).catch(() => {});
   }
 }
+const errorThrottle = new Map();
+function throttleError(tokenTag, reason) {
+  const now = Date.now();
+  const key = `${tokenTag}:${(reason||'').slice(0,80)}`;
+  const prev = errorThrottle.get(key);
+  if (prev && now - prev.start < 300000) { prev.count++; return; }
+  const count = prev ? prev.count : 0;
+  errorThrottle.set(key, { start: now, count: 0 });
+  const suffix = count > 0 ? ` (repeated ${count}x in 5min)` : '';
+  notifyError(`${tokenTag}: ${reason}${suffix}`).catch(() => {});
+}
 
 const bpsDown = (x, bps) => x - (x * bps) / 10000n;
 const keyTuple = (k) => [k.currency0, k.currency1, k.fee, k.tickSpacing, k.hooks];
@@ -304,7 +315,7 @@ async function main() {
         CB.fails = 0; // reset HANYA setelah eksekusi terkonfirmasi sukses (tidak throw)
       } catch (e) {
         console.log('    exec FAILED:', e.shortMessage || e.message);
-        notifyError(`${b.market.symbol} (${b.market.token.slice(0,8)}…) ${b.tag}: ${e.shortMessage || e.message}`).catch(() => {});
+        throttleError(`${b.market.symbol} (${b.market.token.slice(0,8)}…) ${b.tag}`, e.shortMessage || e.message);
         recordFail();
       } finally {
         busy = false;

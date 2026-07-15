@@ -53,75 +53,97 @@ async function getV4Tick(provider) {
   return Number(tick);
 }
 
-// Compute tick range for one-sided CASHCAT deposit:
-//   tickLower = next tickSpacing-multiple ABOVE currentTick  (100% CASHCAT zone)
-//   tickUpper = tickLower + rangeTicks  (100% WETH when price goes up rangePct%)
-// rangePct = 20 means position exits when CASHCAT pumps 20%.
-function computeTickRange(currentTick, rangePct, tickSpacing) {
-  const rangeTicks = Math.floor(Math.log(1 + rangePct / 100) / Math.log(1.0001));
-  const tickLower = Math.ceil(currentTick / tickSpacing) * tickSpacing;
-  const tickUpper = tickLower + Math.ceil(rangeTicks / tickSpacing) * tickSpacing;
+// Compute sqrtPriceX96 at a given tick RELATIVE to current tick+sqrtPrice.
+// Uses 1.0001^((tick - currentTick)/2) * sqrtPriceX96 — safe for |diff| < ~10k.
+function sqrtPriceAtTick(tick, currentTick, currentSqrtPriceX96) {
+  const diff = tick - currentTick;
+  if (diff === 0) return currentSqrtPriceX96;
+  const Q96 = 1n << 96n;
+  const ratio = Math.pow(1.0001, diff / 2);
+  return currentSqrtPriceX96 * BigInt(Math.round(ratio * Number(Q96))) / Q96;
+}
+
+// Compute tick range SYMMETRIC around current tick:
+//   tickLower = currentTick - rangePct%
+//   tickUpper = currentTick + rangePct%
+function computeTickRange(currentTick, symmetricPct, tickSpacing) {
+  const halfRangeTicks = Math.floor(Math.log(1 + symmetricPct / 100) / Math.log(1.0001));
+  const halfRangeAligned = Math.ceil(halfRangeTicks / tickSpacing) * tickSpacing;
+  const tickLower = Math.floor(currentTick / tickSpacing) * tickSpacing - halfRangeAligned;
+  const tickUpper = Math.ceil(currentTick / tickSpacing) * tickSpacing + halfRangeAligned;
   return { tickLower, tickUpper };
 }
 
-// One-sided deposit: given amount0Desired (CASHCAT), compute liquidity at current tick
-function computeLiquidityForAmount0(amount0, tickLower, tickUpper, sqrtPriceX96) {
-  const sqrtPrice = Number(sqrtPriceX96) / 2**96;
-  const sqrtPriceA = Math.sqrt(Math.pow(1.0001, tickLower));
-  const sqrtPriceB = Math.sqrt(Math.pow(1.0001, tickUpper));
-
-  if (sqrtPrice <= sqrtPriceA) {
-    return 0n;
-  } else if (sqrtPrice < sqrtPriceB) {
-    // In range: liquidity = amount0 * sqrtPrice * sqrtPriceB / (sqrtPriceB - sqrtPrice)
-    const liq = Number(amount0) * sqrtPrice * sqrtPriceB / (sqrtPriceB - sqrtPrice);
-    return BigInt(Math.floor(liq));
-  } else {
-    return 0n;
-  }
+// Two-sided liquidity: min(L0, L1) using standard V3 formula.
+// amount0 = CASHCAT, amount1 = WETH.
+function computeLiquidity(amount0, amount1, sqrtPriceX96, currentTick, tickLower, tickUpper) {
+  const sqrtPX96 = BigInt(sqrtPriceX96);
+  const sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, sqrtPX96);
+  const sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, sqrtPX96);
+  const Q96 = 1n << 96n;
+  if (sqrtPX96 <= sqrtPaX96 || sqrtPX96 >= sqrtPbX96) return 0n;
+  const L0 = amount0 * sqrtPX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPX96) * Q96);
+  const L1 = amount1 * Q96 / (sqrtPX96 - sqrtPaX96);
+  return L0 < L1 ? L0 : L1;
 }
 
-// Deposit V3 position (one-sided CASHCAT via mint)
 async function depositV3(provider, wallet, config) {
   console.log('\n=== V3 CASHCAT/WETH 1% Deposit ===');
   if (!config.enableV3CashcatWeth) { console.log('  SKIPPED (disabled in config)'); return null; }
 
   const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
+  const weth = new Contract(WETH, ERC20_ABI, provider);
   const factory = new Contract(V3.factory, ['function feeAmountTickSpacing(uint24) view returns (int24)'], provider);
   const tickSpacing = Number(await factory.feeAmountTickSpacing(LP_V3_CASHCAT_WETH.fee));
+  const symmetricPct = Number(config.rangeSymmetricPct || 15);
 
   const currentTick = await getV3Tick(provider);
-  const { tickLower, tickUpper } = computeTickRange(currentTick, config.rangeDownPct, tickSpacing);
-  console.log(`  Tick spacing: ${tickSpacing}, tickLower % spacing: ${tickLower % tickSpacing}, tickUpper % spacing: ${tickUpper % tickSpacing}`);
+  const { tickLower, tickUpper } = computeTickRange(currentTick, symmetricPct, tickSpacing);
 
-  // Get current sqrtPriceX96 from pool
   const slot0 = await provider.call({ to: LP_V3_CASHCAT_WETH.pool, data: '0x3850c7bd' });
   const [sqrtPriceX96] = AbiCoder.defaultAbiCoder().decode(['uint160'], slot0.slice(0, 66));
 
-  const ethAmount = parseEther(String(config.lpSizeEthCashcatWeth));
   const walletAddr = wallet?.address || NATIVE;
   const cashcatBalance = await cashcat.balanceOf(walletAddr);
+  const wethBalance = await weth.balanceOf(walletAddr);
 
   console.log(`  Tick current: ${currentTick}`);
-  console.log(`  Range: ${tickLower} → ${tickUpper} (0% → +${config.rangeDownPct}%)`);
+  console.log(`  Range: ${tickLower} → ${tickUpper} (±${symmetricPct}%)`);
   console.log(`  CASHCAT balance: ${formatEther(cashcatBalance)}`);
+  console.log(`  WETH balance:    ${formatEther(wethBalance)}`);
 
-  // We need enough CASHCAT for the position (swap already happened)
-  // MintParams: token0, token1, fee, tickLower, tickUpper, amount0Desired, amount1Desired, amount0Min, amount1Min, recipient, deadline
-  const amount0Desired = cashcatBalance; // deposit ALL available CASHCAT
-  const amount1Desired = 1n; // 1 wei WETH to handle tick-boundary edge case
-
+  const amount0Desired = cashcatBalance;
+  const amount1Desired = wethBalance;
   const slippagePct = BigInt(config.slippagePct);
   const amount0Min = amount0Desired - (amount0Desired * slippagePct) / 100n;
-  const amount1Min = 0n;
+  const amount1Min = amount1Desired - (amount1Desired * slippagePct) / 100n;
   const deadline = BigInt(Math.floor(Date.now() / 1000) + config.deadlineSec);
 
-  // Pre-compute expected liquidity for simulation
-  const expectedLiquidity = computeLiquidityForAmount0(
-    amount0Desired, tickLower, tickUpper, BigInt(sqrtPriceX96)
-  );
+  // Detailed liquidity debug
+  const sqrtPX96 = BigInt(sqrtPriceX96);
+  const sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, sqrtPX96);
+  const sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, sqrtPX96);
+  const Q96 = 1n << 96n;
+  const L0_debug = amount0Desired * sqrtPX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPX96) * Q96);
+  const L1_debug = amount1Desired * Q96 / (sqrtPX96 - sqrtPaX96);
+  const expectedLiquidity = L0_debug < L1_debug ? L0_debug : L1_debug;
+  // Back-calculate implied amounts from L
+  let implied0 = amount0Desired, implied1 = amount1Desired;
+  if (expectedLiquidity === L0_debug) {
+    implied1 = expectedLiquidity * (sqrtPX96 - sqrtPaX96) / Q96;
+  } else {
+    implied0 = expectedLiquidity * (sqrtPbX96 - sqrtPX96) * Q96 / (sqrtPX96 * sqrtPbX96);
+  }
+  console.log(`  sqrtPaX96: ${sqrtPaX96}`);
+  console.log(`  sqrtPbX96: ${sqrtPbX96}`);
+  console.log(`  sqrtPX96:  ${sqrtPX96}`);
   console.log(`  amount0 (CASHCAT): ${formatEther(amount0Desired)}`);
-  console.log(`  estimated liquidity: ${expectedLiquidity}`);
+  console.log(`  amount1 (WETH):    ${formatEther(amount1Desired)}`);
+  console.log(`  L0 = amount0·sqrtP·sqrtPb / ((sqrtPb-sqrtP)·Q96) = ${L0_debug}`);
+  console.log(`  L1 = amount1·Q96 / (sqrtP-sqrtPa) = ${L1_debug}`);
+  console.log(`  L = min(L0, L1) = ${expectedLiquidity}  (${expectedLiquidity === L0_debug ? 'L0-constrained (CASHCAT side)' : 'L1-constrained (WETH side)'})`);
+  console.log(`  Implied amount0 used: ${formatEther(implied0)} CASHCAT`);
+  console.log(`  Implied amount1 used: ${formatEther(implied1)} WETH`);
 
   if (!wallet) {
     console.log('  DRY-RUN: no wallet, skipping mint.');
@@ -130,7 +152,6 @@ async function depositV3(provider, wallet, config) {
 
   const nfpm = new Contract(V3.nfpm, V3_NFPM_ABI, wallet);
 
-  // Approve NFPM to spend CASHCAT and WETH if needed
   const cashcatAllowance = await cashcat.allowance(wallet.address, V3.nfpm);
   if (cashcatAllowance < amount0Desired) {
     console.log('  Approving CASHCAT for V3 NFPM...');
@@ -139,7 +160,6 @@ async function depositV3(provider, wallet, config) {
     await app.wait();
     console.log(`  Approve tx: ${app.hash}`);
   }
-  const weth = new Contract(WETH, ERC20_ABI, wallet);
   const wethAllowance = await weth.allowance(wallet.address, V3.nfpm);
   if (wethAllowance < amount1Desired) {
     console.log('  Approving WETH for V3 NFPM...');
@@ -169,7 +189,6 @@ async function depositV3(provider, wallet, config) {
   console.log(`  Mint tx: ${tx.hash}`);
   const receipt = await tx.wait();
 
-  // Parse tokenId from Transfer event (from=0x0 → wallet)
   const nfpmLogs = receipt.logs.filter(l => l.address.toLowerCase() === V3.nfpm.toLowerCase());
   let tokenId = null;
   for (const log of nfpmLogs) {
@@ -181,7 +200,7 @@ async function depositV3(provider, wallet, config) {
   console.log(`  Token ID: ${tokenId}`);
 
   const position = { dex: 'V3', pool: LP_V3_CASHCAT_WETH.symbol, tokenId: tokenId?.toString(),
-    tickLower, tickUpper, amount0: amount0Desired.toString(), amount1: '0',
+    tickLower, tickUpper, amount0: amount0Desired.toString(), amount1: amount1Desired.toString(),
     block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
   const state = loadState();
   state.positions.push(position);
@@ -286,9 +305,9 @@ async function main() {
 
   console.log('\n=== LP DEPOSIT ========================================');
   console.log('Config:');
-  console.log(`  V3 CASHCAT/WETH: ${config.enableV3CashcatWeth ? 'ENABLED' : 'DISABLED'} (${config.lpSizeEthCashcatWeth} ETH)`);
-  console.log(`  V4 CASHCAT/USDG: ${config.enableV4CashcatUsdg ? 'ENABLED' : 'DISABLED'} (${config.lpSizeEthCashcatUsdg} ETH)`);
-  console.log(`  Range: -${config.rangeDownPct}% → 0%`);
+  console.log(`  V3 CASHCAT/WETH: ${config.enableV3CashcatWeth ? 'ENABLED' : 'DISABLED'} (CASHCAT: ${config.lpAmountEthCashcat} ETH | WETH: ${config.lpAmountEthWeth} ETH)`);
+  console.log(`  V4 CASHCAT/USDG: ${config.enableV4CashcatUsdg ? 'ENABLED' : 'DISABLED'} (${config.lpAmountEthCashcat} ETH)`);
+  console.log(`  Range: ±${config.rangeSymmetricPct}% (symmetric)`);
   console.log(`  Slippage: ${config.slippagePct}%`);
 
   const resultV3 = wallet ? null : { token0: CASHCAT, token1: WETH, fee: 10000 };

@@ -65,9 +65,10 @@
     "enableV3CashcatWeth": true,
     "enableV4CashcatUsdg": false,
 
-    "lpSizeEthCashcatWeth": 0.02,
-    "lpSizeEthCashcatUsdg": 0.02,
+    "lpAmountEthCashcat": 0.01,
+    "lpAmountEthWeth": 0.01,
 
+    "rangeSymmetricPct": 15,
     "rangeDownPct": 20,
     "slippagePct": 1,
     "deadlineSec": 300,
