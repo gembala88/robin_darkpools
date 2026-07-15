@@ -130,10 +130,11 @@ async function discoverV4Pools(provider, fromBlock, toBlock) {
 const LIQUIDITY_SELECTOR = '0x1a686502'; // keccak256("liquidity()")[0:4]
 
 async function filterLiquidPools(provider, pools, label) {
-  if (!pools.length) return [];
+  if (!pools.length) return { liquid: [], failed: [] };
   const CONCURRENCY = 30;
   const liquid = [];
-  let dry = 0, failed = 0;
+  const failedPools = [];
+  let dry = 0;
 
   for (let i = 0; i < pools.length; i += CONCURRENCY) {
     const chunk = pools.slice(i, i + CONCURRENCY);
@@ -153,20 +154,19 @@ async function filterLiquidPools(provider, pools, label) {
           dry++;
         }
       } else {
-        failed++;
+        failedPools.push(chunk[j]);
       }
     }
 
-    // progress log setiap 300 pool
     const done = Math.min(i + CONCURRENCY, pools.length);
     if (done % 300 === 0 || done === pools.length) {
-      console.log(`  ${label}: ${done}/${pools.length} checked — ${liquid.length} liquid, ${dry} dry${failed ? `, ${failed} failed` : ''}`);
+      console.log(`  ${label}: ${done}/${pools.length} checked — ${liquid.length} liquid, ${dry} dry${failedPools.length ? `, ${failedPools.length} failed` : ''}`);
     }
   }
 
-  if (failed) console.log(`  ${label}: done — ${liquid.length} liquid, ${dry} dry, ${failed} failed`);
+  if (failedPools.length) console.log(`  ${label}: done — ${liquid.length} liquid, ${dry} dry, ${failedPools.length} failed (saved for retry)`);
   else console.log(`  ${label}: done — ${liquid.length} liquid, ${dry} dry`);
-  return liquid;
+  return { liquid, failed: failedPools };
 }
 
 // ===== INITIAL DISCOVERY (on-chain + DexScreener seed) =====
@@ -196,9 +196,13 @@ async function runInitialDiscovery(provider) {
     const v3pools = await discoverV3Pools(provider, 0, head);
     const v3New = v3pools.filter(p => !state.pools[p.pool]);
     console.log(`  V3: ${v3pools.length} total, ${v3New.length} new — filtering by on-chain liquidity...`);
-    const v3Liquid = await filterLiquidPools(provider, v3New, 'V3');
-    if (v3Liquid.length < v3New.length) {
-      console.log(`  SKIPPED ${v3New.length - v3Liquid.length} V3 pools (zero on-chain liquidity)`);
+    const { liquid: v3Liquid, failed: v3Failed } = await filterLiquidPools(provider, v3New, 'V3');
+    const v3Dry = v3New.length - v3Liquid.length - v3Failed.length;
+    if (v3Failed.length) {
+      console.log(`  FAILED: ${v3Failed.length} pools (RPC error/timeout) — saved to pendingRetry for next cycle`);
+    }
+    if (v3Dry > 0) {
+      console.log(`  SKIPPED ${v3Dry} V3 pools (confirmed zero on-chain liquidity)`);
     }
 
     // 3. On-chain V4 scan (no liquidity pre-filter — V4 uses poolId, not contract address)
@@ -240,6 +244,12 @@ async function runInitialDiscovery(provider) {
           };
         }
       }
+    }
+
+    // save failed pools for retry next cycle
+    if (v3Failed.length) {
+      state.pendingRetry = [...(state.pendingRetry || []), ...v3Failed];
+      console.log(`  ${v3Failed.length} pools queued for retry`);
     }
 
     state.lastDiscovery = head;
@@ -323,56 +333,104 @@ async function updatePoolData() {
 // ===== ON-CHAIN DISCOVERY (periodic, every few hours) =====
 async function runPeriodicDiscovery(provider) {
   if (!provider) { console.log('runPeriodicDiscovery: no provider — skipping'); return 0; }
+  let newPools = [];
+
+  // 1. Retry previously failed pools if any
+  if (state.pendingRetry?.length) {
+    console.log(`\n=== Retrying ${state.pendingRetry.length} previously failed pools ===`);
+    const { liquid, failed: stillFailed } = await filterLiquidPools(provider, state.pendingRetry, 'retry');
+    const newlyDry = state.pendingRetry.length - liquid.length - stillFailed.length;
+
+    // Process newly liquid: fetch DexScreener batch for them
+    if (liquid.length) {
+      console.log(`  Fetching DexScreener data for ${liquid.length} recovered pools...`);
+      const dpPairs = await fetchBatchPools(liquid.map(p => p.pool));
+      const dsMap = {};
+      for (const p of dpPairs) dsMap[lc(p.pairAddress)] = p;
+      for (let i = 0; i < liquid.length; i++) {
+        const p = liquid[i];
+        const key = p.pool;
+        const fromDs = dsMap[key];
+        if (fromDs) {
+          state.pools[key] = poolFromDSPair(fromDs);
+        } else if (p.version === 'v3') {
+          state.pools[key] = {
+            pairAddress: key, version: 'v3', blockDiscovered: p.block,
+            baseToken: { address: p.token0 }, quoteToken: { address: p.token1 },
+            fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
+            tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
+          };
+        } else {
+          state.pools[key] = {
+            pairAddress: key, version: 'v4', blockDiscovered: p.block,
+            currency0: p.currency0, currency1: p.currency1,
+            fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
+            tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
+          };
+        }
+        newPools.push(key);
+      }
+      console.log(`  Retry: ${liquid.length} recovered ${newlyDry ? `+ ${newlyDry} confirmed dry` : ''}${stillFailed.length ? `, ${stillFailed.length} still pending` : ''}`);
+    }
+
+    state.pendingRetry = stillFailed.length ? stillFailed : undefined;
+    saveState();
+  }
+
+  // 2. Normal periodic discovery for new blocks
   const head = await provider.getBlockNumber();
   const fromBlock = state.lastDiscovery > 0 ? state.lastDiscovery + 1 : 0;
-  if (fromBlock >= head) return 0;
+  if (fromBlock >= head && !state.pendingRetry?.length) { return newPools.length; }
 
   const v3 = await discoverV3Pools(provider, fromBlock, head);
   const v3New = v3.filter(p => !state.pools[p.pool]);
-  const v3Liquid = await filterLiquidPools(provider, v3New, 'V3-periodic');
-  if (v3Liquid.length < v3New.length) {
-    console.log(`  SKIPPED ${v3New.length - v3Liquid.length} V3 pools (zero on-chain liquidity)`);
+  const { liquid: v3Liquid, failed: v3Failed } = await filterLiquidPools(provider, v3New, 'V3-periodic');
+  const v3Dry = v3New.length - v3Liquid.length - v3Failed.length;
+  if (v3Failed.length) {
+    state.pendingRetry = [...(state.pendingRetry || []), ...v3Failed];
+    console.log(`  V3: ${v3Failed.length} failed (queued for retry)`);
   }
+  if (v3Dry > 0) console.log(`  SKIPPED ${v3Dry} V3 pools (confirmed zero on-chain liquidity)`);
 
   const v4 = await discoverV4Pools(provider, fromBlock, head);
   const v4New = v4.filter(p => !state.pools[p.pool]);
 
   const allNew = [...v3Liquid, ...v4New];
-  if (!allNew.length) { state.lastDiscovery = head; return 0; }
+  if (allNew.length) {
+    const newKeys = allNew.map(p => p.pool);
+    const dpPairs = await fetchBatchPools(newKeys);
+    const dsMap = {};
+    for (const p of dpPairs) dsMap[lc(p.pairAddress)] = p;
 
-  const newKeys = allNew.map(p => p.pool);
-  const dpPairs = await fetchBatchPools(newKeys);
-  const dsMap = {};
-  for (const p of dpPairs) dsMap[lc(p.pairAddress)] = p;
-
-  let found = 0;
-  for (let i = 0; i < allNew.length; i++) {
-    const p = allNew[i];
-    const key = p.pool;
-    console.log(`  periodic pool ${i + 1}/${allNew.length}: ${key}${dsMap[key] ? ' (DexScreener)' : ' (on-chain only)'}`);
-    if (dsMap[key]) {
-      state.pools[key] = poolFromDSPair(dsMap[key]);
-    } else if (p.version === 'v3') {
-      state.pools[key] = {
-        pairAddress: key, version: 'v3', blockDiscovered: p.block,
-        baseToken: { address: p.token0 }, quoteToken: { address: p.token1 },
-        fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
-        tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
-      };
-    } else {
-      state.pools[key] = {
-        pairAddress: key, version: 'v4', blockDiscovered: p.block,
-        currency0: p.currency0, currency1: p.currency1,
-        fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
-        tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
-      };
+    for (let i = 0; i < allNew.length; i++) {
+      const p = allNew[i];
+      const key = p.pool;
+      console.log(`  periodic pool ${i + 1}/${allNew.length}: ${key}${dsMap[key] ? ' (DexScreener)' : ' (on-chain only)'}`);
+      if (dsMap[key]) {
+        state.pools[key] = poolFromDSPair(dsMap[key]);
+      } else if (p.version === 'v3') {
+        state.pools[key] = {
+          pairAddress: key, version: 'v3', blockDiscovered: p.block,
+          baseToken: { address: p.token0 }, quoteToken: { address: p.token1 },
+          fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
+          tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
+        };
+      } else {
+        state.pools[key] = {
+          pairAddress: key, version: 'v4', blockDiscovered: p.block,
+          currency0: p.currency0, currency1: p.currency1,
+          fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
+          tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
+        };
+      }
+      newPools.push(key);
     }
-    found++;
   }
 
   state.lastDiscovery = head;
-  console.log(`discovered ${found} new pools (V3:${v3Liquid.length}, V4:${v4New.length})`);
-  return found;
+  if (state.pendingRetry?.length) saveState();
+  console.log(`discovered ${newPools.length} pools (V3:${v3Liquid.length}, V4:${v4New.length})`);
+  return newPools.length;
 }
 
 // ===== SCORING =====
