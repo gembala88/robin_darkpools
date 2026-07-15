@@ -126,6 +126,46 @@ async function discoverV4Pools(provider, fromBlock, toBlock) {
   return out;
 }
 
+// ===== ON-CHAIN LIQUIDITY FILTER (pre-filter sebelum DexScreener) =====
+const LIQUIDITY_SELECTOR = '0x1a686502'; // keccak256("liquidity()")[0:4]
+
+async function filterLiquidPools(provider, pools, label) {
+  if (!pools.length) return [];
+  const CONCURRENCY = 30;
+  const liquid = [];
+  let dry = 0, failed = 0;
+
+  for (let i = 0; i < pools.length; i += CONCURRENCY) {
+    const chunk = pools.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(
+      chunk.map(p => provider.call({ to: p.pool, data: LIQUIDITY_SELECTOR }))
+    );
+
+    for (let j = 0; j < chunk.length; j++) {
+      if (results[j].status === 'fulfilled') {
+        const liq = BigInt(results[j].value);
+        if (liq > 0n) {
+          liquid.push(chunk[j]);
+        } else {
+          dry++;
+        }
+      } else {
+        failed++;
+      }
+    }
+
+    // progress log setiap 300 pool
+    const done = Math.min(i + CONCURRENCY, pools.length);
+    if (done % 300 === 0 || done === pools.length) {
+      console.log(`  ${label}: ${done}/${pools.length} checked — ${liquid.length} liquid, ${dry} dry${failed ? `, ${failed} failed` : ''}`);
+    }
+  }
+
+  if (failed) console.log(`  ${label}: done — ${liquid.length} liquid, ${dry} dry, ${failed} failed`);
+  else console.log(`  ${label}: done — ${liquid.length} liquid, ${dry} dry`);
+  return liquid;
+}
+
 // ===== INITIAL DISCOVERY (on-chain + DexScreener seed) =====
 async function runInitialDiscovery(provider) {
   console.log('\n=== Initial LP Pool Discovery ===');
@@ -146,24 +186,29 @@ async function runInitialDiscovery(provider) {
     console.log(`  "${term}": ${j.pairs.filter(p => p.chainId === 'robinhood').length} robinhood pools`);
   }
 
-  // 2. On-chain V3+V4 scan — skip if RPC unavailable
+  // 2. On-chain V3 scan — pre-filter by liquidity
   if (provider) {
     console.log('Scanning V3 Factory PoolCreated events...');
     const head = await provider.getBlockNumber();
     const v3pools = await discoverV3Pools(provider, 0, head);
     const v3New = v3pools.filter(p => !state.pools[p.pool]);
-    console.log(`  V3: ${v3pools.length} total, ${v3New.length} new`);
+    console.log(`  V3: ${v3pools.length} total, ${v3New.length} new — filtering by on-chain liquidity...`);
+    const v3Liquid = await filterLiquidPools(provider, v3New, 'V3');
+    if (v3Liquid.length < v3New.length) {
+      console.log(`  SKIPPED ${v3New.length - v3Liquid.length} V3 pools (zero on-chain liquidity)`);
+    }
 
+    // 3. On-chain V4 scan (no liquidity pre-filter — V4 uses poolId, not contract address)
     console.log('Scanning V4 PoolManager Initialize events...');
     const v4pools = await discoverV4Pools(provider, 0, head);
     const v4New = v4pools.filter(p => !state.pools[p.pool]);
     console.log(`  V4: ${v4pools.length} total, ${v4New.length} new`);
 
-    // 3. Batch-fetch DexScreener data for ALL new pools at once
-    const allNew = [...v3New, ...v4New];
+    // 4. Batch-fetch DexScreener only for pools with real liquidity
+    const allNew = [...v3Liquid, ...v4New];
     if (allNew.length) {
       const newKeys = allNew.map(p => p.pool);
-      console.log(`  Fetching DexScreener data for ${newKeys.length} new pools...`);
+      console.log(`  Fetching DexScreener data for ${newKeys.length} pools with on-chain liquidity...`);
       const dpPairs = await fetchBatchPools(newKeys);
       const dsMap = {};
       for (const p of dpPairs) dsMap[lc(p.pairAddress)] = p;
@@ -281,10 +326,15 @@ async function runPeriodicDiscovery(provider) {
 
   const v3 = await discoverV3Pools(provider, fromBlock, head);
   const v3New = v3.filter(p => !state.pools[p.pool]);
+  const v3Liquid = await filterLiquidPools(provider, v3New, 'V3-periodic');
+  if (v3Liquid.length < v3New.length) {
+    console.log(`  SKIPPED ${v3New.length - v3Liquid.length} V3 pools (zero on-chain liquidity)`);
+  }
+
   const v4 = await discoverV4Pools(provider, fromBlock, head);
   const v4New = v4.filter(p => !state.pools[p.pool]);
 
-  const allNew = [...v3New, ...v4New];
+  const allNew = [...v3Liquid, ...v4New];
   if (!allNew.length) { state.lastDiscovery = head; return 0; }
 
   const newKeys = allNew.map(p => p.pool);
@@ -318,7 +368,7 @@ async function runPeriodicDiscovery(provider) {
   }
 
   state.lastDiscovery = head;
-  console.log(`discovered ${found} new pools (V3:${v3New.length}, V4:${v4New.length})`);
+  console.log(`discovered ${found} new pools (V3:${v3Liquid.length}, V4:${v4New.length})`);
   return found;
 }
 
