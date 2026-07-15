@@ -17,27 +17,6 @@ const CFG = { dry: process.env.DRY !== '0', live: process.env.DRY === '0' };
 const CASHCAT = LP_V3_CASHCAT_WETH.token0;
 const WETH = LP_V3_CASHCAT_WETH.token1;
 
-<<<<<<< HEAD
-async function simulateV3Swap(provider, ethAmount) {
-  const quoter = new Contract(V3.quoterV2, V3_QUOTERV2_ABI, provider);
-  const params = [WETH, CASHCAT, ethAmount, 10000, 0];
-  const [amountOut] = await quoter.quoteExactInputSingle.staticCall(params);
-  console.log(`  V3 swap: ${formatEther(ethAmount)} ETH → ${formatEther(amountOut)} CASHCAT`);
-  return amountOut;
-}
-
-async function buildV3SwapTx(wallet, ethAmount, cashcatAmountMin) {
-  const router = new Contract(V3.swapRouter02, V3_SWAP_ROUTER_ABI, wallet);
-  // FIXED: Robinhood fork's ExactInputSingleParams has NO deadline
-  // TERVERIFIKASI dengan tx nyata sukses (bukan NATIVE, yang itu BUG lama)
-  const params = [WETH, CASHCAT, 10000, wallet.address, ethAmount, cashcatAmountMin, 0n];
-  const tx = await router.exactInputSingle.populateTransaction(params);
-  tx.value = ethAmount;
-  return tx;
-}
-
-=======
->>>>>>> 5e8ff71dd54d41af1186fd2a00e60cf4311f93ca
 async function main() {
   const provider = await makeProvider();
   const amountCashcatEth = parseEther(String(process.env.AMOUNT_CASHCAT_ETH || UC('lp.lpAmountEthCashcat')));
@@ -58,11 +37,7 @@ async function main() {
   console.log(`  CASHCAT min (${slippagePct}% slip): ${formatEther(cashcatMin)}`);
 
   if (CFG.dry || !process.env.PRIVATE_KEY) {
-<<<<<<< HEAD
     console.log('\nDRY-RUN: no tx sent. Set DRY=0 PRIVATE_KEY=0x.. to execute (independent of arb LIVE flag).');
-=======
-    console.log('\nDRY-RUN: no tx sent. Set DRY=0 PRIVATE_KEY=0x.. to execute.');
->>>>>>> 5e8ff71dd54d41af1186fd2a00e60cf4311f93ca
     process.exit(0);
   }
 

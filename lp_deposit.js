@@ -149,9 +149,6 @@ async function depositV3(provider, wallet, config) {
   console.log(`  L = min(L0, L1) = ${expectedLiquidity}  (${expectedLiquidity === L0_debug ? 'L0-constrained (CASHCAT side)' : 'L1-constrained (WETH side)'})`);
   console.log(`  Implied amount0 used: ${formatEther(implied0)} CASHCAT`);
   console.log(`  Implied amount1 used: ${formatEther(implied1)} WETH`);
-  // Fix: amount0Min/amount1Min dari implied (jumlah nyata L pakai), BUKAN dari input mentah
-  const amount0Min = implied0 - (implied0 * slippagePct) / 100n;
-  const amount1Min = implied1 - (implied1 * slippagePct) / 100n;
 
   if (!wallet) {
     console.log('  DRY-RUN: no wallet, skipping mint.');
