@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import fs from 'node:fs';
 import { id as topicId, getAddress, AbiCoder } from 'ethers';
-import { makeProvider } from './provider.js';
 import { UC } from './config.js';
 import { tgScreener } from './telegram.js';
 import { checkGMGN } from './gmgn.js';
@@ -169,11 +168,11 @@ async function filterLiquidPools(provider, pools, label) {
   return { liquid, failed: failedPools };
 }
 
-// ===== INITIAL DISCOVERY (on-chain + DexScreener seed) =====
-async function runInitialDiscovery(provider) {
+// ===== INITIAL DISCOVERY (DexScreener search ONLY — no on-chain scan) =====
+async function runInitialDiscovery() {
   console.log('\n=== Initial LP Pool Discovery ===');
 
-  // 1. Seed from DexScreener search
+  // Seed from DexScreener search (26-28 relevant pools, confirmed)
   console.log('Searching DexScreener for initial pools...');
   for (const term of DS_SEARCH_TERMS) {
     const j = await fetchDexScreener(`/search?q=${encodeURIComponent(term)}`);
@@ -189,74 +188,7 @@ async function runInitialDiscovery(provider) {
     console.log(`  "${term}": ${j.pairs.filter(p => p.chainId === 'robinhood').length} robinhood pools`);
   }
 
-  // 2. On-chain V3 scan — pre-filter by liquidity
-  if (provider) {
-    console.log('Scanning V3 Factory PoolCreated events...');
-    const head = await provider.getBlockNumber();
-    const v3pools = await discoverV3Pools(provider, 0, head);
-    const v3New = v3pools.filter(p => !state.pools[p.pool]);
-    console.log(`  V3: ${v3pools.length} total, ${v3New.length} new — filtering by on-chain liquidity...`);
-    const { liquid: v3Liquid, failed: v3Failed } = await filterLiquidPools(provider, v3New, 'V3');
-    const v3Dry = v3New.length - v3Liquid.length - v3Failed.length;
-    if (v3Failed.length) {
-      console.log(`  FAILED: ${v3Failed.length} pools (RPC error/timeout) — saved to pendingRetry for next cycle`);
-    }
-    if (v3Dry > 0) {
-      console.log(`  SKIPPED ${v3Dry} V3 pools (confirmed zero on-chain liquidity)`);
-    }
-
-    // 3. On-chain V4 scan (no liquidity pre-filter — V4 uses poolId, not contract address)
-    console.log('Scanning V4 PoolManager Initialize events...');
-    const v4pools = await discoverV4Pools(provider, 0, head);
-    const v4New = v4pools.filter(p => !state.pools[p.pool]);
-    console.log(`  V4: ${v4pools.length} total, ${v4New.length} new`);
-
-    // 4. Batch-fetch DexScreener only for pools with real liquidity
-    const allNew = [...v3Liquid, ...v4New];
-    if (allNew.length) {
-      const newKeys = allNew.map(p => p.pool);
-      console.log(`  Fetching DexScreener data for ${newKeys.length} pools with on-chain liquidity...`);
-      const dpPairs = await fetchBatchPools(newKeys);
-      const dsMap = {};
-      for (const p of dpPairs) dsMap[lc(p.pairAddress)] = p;
-      console.log(`  DexScreener returned data for ${dpPairs.length}/${newKeys.length}`);
-
-      for (let i = 0; i < allNew.length; i++) {
-        const p = allNew[i];
-        const key = p.pool;
-        const fromDs = dsMap[key];
-        console.log(`  processing pool ${i + 1}/${allNew.length}: ${key}${fromDs ? ' (DexScreener)' : ' (on-chain only)'}`);
-        if (fromDs) {
-          state.pools[key] = poolFromDSPair(fromDs);
-        } else if (p.version === 'v3') {
-          state.pools[key] = {
-            pairAddress: key, version: 'v3', blockDiscovered: p.block,
-            baseToken: { address: p.token0 }, quoteToken: { address: p.token1 },
-            fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
-            tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
-          };
-        } else {
-          state.pools[key] = {
-            pairAddress: key, version: 'v4', blockDiscovered: p.block,
-            currency0: p.currency0, currency1: p.currency1,
-            fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
-            tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
-          };
-        }
-      }
-    }
-
-    // save failed pools for retry next cycle
-    if (v3Failed.length) {
-      state.pendingRetry = [...(state.pendingRetry || []), ...v3Failed];
-      console.log(`  ${v3Failed.length} pools queued for retry`);
-    }
-
-    state.lastDiscovery = head;
-    saveState();
-  } else {
-    console.log('Skipping on-chain discovery (RPC unavailable)');
-  }
+  saveState();
   console.log(`Total pools tracked: ${Object.keys(state.pools).length}`);
 }
 
@@ -330,107 +262,9 @@ async function updatePoolData() {
   return updated;
 }
 
-// ===== ON-CHAIN DISCOVERY (periodic, every few hours) =====
-async function runPeriodicDiscovery(provider) {
-  if (!provider) { console.log('runPeriodicDiscovery: no provider — skipping'); return 0; }
-  let newPools = [];
-
-  // 1. Retry previously failed pools if any
-  if (state.pendingRetry?.length) {
-    console.log(`\n=== Retrying ${state.pendingRetry.length} previously failed pools ===`);
-    const { liquid, failed: stillFailed } = await filterLiquidPools(provider, state.pendingRetry, 'retry');
-    const newlyDry = state.pendingRetry.length - liquid.length - stillFailed.length;
-
-    // Process newly liquid: fetch DexScreener batch for them
-    if (liquid.length) {
-      console.log(`  Fetching DexScreener data for ${liquid.length} recovered pools...`);
-      const dpPairs = await fetchBatchPools(liquid.map(p => p.pool));
-      const dsMap = {};
-      for (const p of dpPairs) dsMap[lc(p.pairAddress)] = p;
-      for (let i = 0; i < liquid.length; i++) {
-        const p = liquid[i];
-        const key = p.pool;
-        const fromDs = dsMap[key];
-        if (fromDs) {
-          state.pools[key] = poolFromDSPair(fromDs);
-        } else if (p.version === 'v3') {
-          state.pools[key] = {
-            pairAddress: key, version: 'v3', blockDiscovered: p.block,
-            baseToken: { address: p.token0 }, quoteToken: { address: p.token1 },
-            fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
-            tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
-          };
-        } else {
-          state.pools[key] = {
-            pairAddress: key, version: 'v4', blockDiscovered: p.block,
-            currency0: p.currency0, currency1: p.currency1,
-            fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
-            tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
-          };
-        }
-        newPools.push(key);
-      }
-      console.log(`  Retry: ${liquid.length} recovered ${newlyDry ? `+ ${newlyDry} confirmed dry` : ''}${stillFailed.length ? `, ${stillFailed.length} still pending` : ''}`);
-    }
-
-    state.pendingRetry = stillFailed.length ? stillFailed : undefined;
-    saveState();
-  }
-
-  // 2. Normal periodic discovery for new blocks
-  const head = await provider.getBlockNumber();
-  const fromBlock = state.lastDiscovery > 0 ? state.lastDiscovery + 1 : 0;
-  if (fromBlock >= head && !state.pendingRetry?.length) { return newPools.length; }
-
-  const v3 = await discoverV3Pools(provider, fromBlock, head);
-  const v3New = v3.filter(p => !state.pools[p.pool]);
-  const { liquid: v3Liquid, failed: v3Failed } = await filterLiquidPools(provider, v3New, 'V3-periodic');
-  const v3Dry = v3New.length - v3Liquid.length - v3Failed.length;
-  if (v3Failed.length) {
-    state.pendingRetry = [...(state.pendingRetry || []), ...v3Failed];
-    console.log(`  V3: ${v3Failed.length} failed (queued for retry)`);
-  }
-  if (v3Dry > 0) console.log(`  SKIPPED ${v3Dry} V3 pools (confirmed zero on-chain liquidity)`);
-
-  const v4 = await discoverV4Pools(provider, fromBlock, head);
-  const v4New = v4.filter(p => !state.pools[p.pool]);
-
-  const allNew = [...v3Liquid, ...v4New];
-  if (allNew.length) {
-    const newKeys = allNew.map(p => p.pool);
-    const dpPairs = await fetchBatchPools(newKeys);
-    const dsMap = {};
-    for (const p of dpPairs) dsMap[lc(p.pairAddress)] = p;
-
-    for (let i = 0; i < allNew.length; i++) {
-      const p = allNew[i];
-      const key = p.pool;
-      console.log(`  periodic pool ${i + 1}/${allNew.length}: ${key}${dsMap[key] ? ' (DexScreener)' : ' (on-chain only)'}`);
-      if (dsMap[key]) {
-        state.pools[key] = poolFromDSPair(dsMap[key]);
-      } else if (p.version === 'v3') {
-        state.pools[key] = {
-          pairAddress: key, version: 'v3', blockDiscovered: p.block,
-          baseToken: { address: p.token0 }, quoteToken: { address: p.token1 },
-          fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
-          tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
-        };
-      } else {
-        state.pools[key] = {
-          pairAddress: key, version: 'v4', blockDiscovered: p.block,
-          currency0: p.currency0, currency1: p.currency1,
-          fee: p.fee, tickSpacing: p.tickSpacing, discoveredAt: Date.now(),
-          tvlUsd: 0, volume24h: 0, swaps24h: 0, score: 0, notified: false,
-        };
-      }
-      newPools.push(key);
-    }
-  }
-
-  state.lastDiscovery = head;
-  if (state.pendingRetry?.length) saveState();
-  console.log(`discovered ${newPools.length} pools (V3:${v3Liquid.length}, V4:${v4New.length})`);
-  return newPools.length;
+// ===== ON-CHAIN DISCOVERY (DISABLED — using DexScreener only) =====
+async function runPeriodicDiscovery() {
+  return 0;
 }
 
 // ===== SCORING =====
@@ -638,46 +472,21 @@ async function sendSummary() {
   await tgScreener(lines.join('\n'));
 }
 
-// ===== ON-CHAIN DISCOVERY (skipped gracefully if RPC down) =====
-let _provider = null;
-let _chainOk = false;
-
-async function initProvider() {
-  if (_provider) return true;
-  try {
-    _provider = await makeProvider('SCREENER_RPC_URL');
-    const cid = (await _provider.getNetwork()).chainId;
-    console.log(`chainId: ${cid}`);
-    _chainOk = true;
-    return true;
-  } catch (err) {
-    console.log(`RPC unavailable: ${err.shortMessage || err.message} — running DexScreener-only mode`);
-    _chainOk = false;
-    return false;
-  }
-}
-
 // ===== MAIN =====
 async function main() {
-  console.log('RobinArb LP Screener — DexScreener + optional on-chain discovery\n');
-
-  // RPC is optional — script works without it (DexScreener only)
-  const rpcOk = await initProvider();
+  console.log('RobinArb LP Screener — DexScreener only\n');
 
   loadState();
 
   // Config
-  const pollMs          = cfgSc('pollIntervalMs') || 1200000; // 20 min default
-  const discoveryMins   = cfgSc('discoveryIntervalMin') || 180; // 3 hours default
-  const discoveryMs     = discoveryMins * 60 * 1000;
-  const summaryMins     = cfgSc('summaryIntervalMin') || 360; // 6 hours default
+  const pollMs          = cfgSc('pollIntervalMs') || 1200000;
+  const summaryMins     = cfgSc('summaryIntervalMin') || 360;
   const summaryMs       = summaryMins * 60 * 1000;
 
   // --- Initial discovery if state is empty ---
   if (!Object.keys(state.pools).length) {
-    await runInitialDiscovery(rpcOk ? _provider : null);
+    await runInitialDiscovery();
   } else {
-    // Quick DexScreener fetch to refresh data
     console.log('\nRefreshing pool data from DexScreener...');
     const updated = await updatePoolData();
     console.log(`Updated ${updated} pools`);
@@ -689,11 +498,10 @@ async function main() {
   console.log(`Initial: ${init.passed} passed filters, ${init.notified} new candidates`);
 
   await tgScreener(
-    `🔍 <b>LP Screener online</b> — tracking ${Object.keys(state.pools).length} pools${rpcOk ? `, discovery every ${discoveryMins}min` : ', DexScreener-only (no RPC)'}`
+    `🔍 <b>LP Screener online</b> — tracking ${Object.keys(state.pools).length} pools, polling every ${(pollMs / 60000).toFixed(0)}min`
   );
 
   // --- Schedule loops ---
-  let lastDiscoveryRun = Date.now();
   let lastFetchRun = Date.now();
   let lastSummaryRun = Date.now();
 
@@ -701,21 +509,7 @@ async function main() {
     try {
       const now = Date.now();
 
-      // Periodic on-chain discovery (every ~3 hours, skip if RPC down)
-      if (now - lastDiscoveryRun > discoveryMs) {
-        if (_chainOk) {
-          try {
-            console.log('\n=== Periodic On-Chain Discovery ===');
-            const found = await runPeriodicDiscovery(_provider);
-            if (found) saveState();
-          } catch (discErr) {
-            console.log(`On-chain discovery failed: ${discErr.shortMessage || discErr.message} — will retry next cycle`);
-          }
-        }
-        lastDiscoveryRun = now;
-      }
-
-      // DexScreener data refresh (every ~20 min — no RPC needed)
+      // DexScreener data refresh
       if (now - lastFetchRun > pollMs) {
         console.log(`\n${new Date().toISOString().slice(11, 19)} — Refreshing DexScreener data...`);
         const updated = await updatePoolData();
@@ -727,7 +521,7 @@ async function main() {
         lastFetchRun = now;
       }
 
-      // Periodic summary (every ~6 hours)
+      // Periodic summary
       if (now - lastSummaryRun > summaryMs) {
         await sendSummary();
         lastSummaryRun = now;
@@ -735,7 +529,7 @@ async function main() {
     } catch (err) {
       console.error('loop error:', err.shortMessage || err.message);
     }
-  }, Math.min(pollMs, 60000)); // check every 60s or pollMs, whichever is smaller
+  }, Math.min(pollMs, 60000));
 
   process.on('SIGINT', () => { console.log('\nshutting down...'); saveState(); clearInterval(interval); process.exit(0); });
   process.on('SIGTERM', () => { console.log('\nshutting down...'); saveState(); clearInterval(interval); process.exit(0); });
