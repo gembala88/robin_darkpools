@@ -138,7 +138,10 @@ async function filterLiquidPools(provider, pools, label) {
   for (let i = 0; i < pools.length; i += CONCURRENCY) {
     const chunk = pools.slice(i, i + CONCURRENCY);
     const results = await Promise.allSettled(
-      chunk.map(p => provider.call({ to: p.pool, data: LIQUIDITY_SELECTOR }))
+      chunk.map(p => Promise.race([
+        provider.call({ to: p.pool, data: LIQUIDITY_SELECTOR }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('liquidity() timeout 8s')), 8000))
+      ]))
     );
 
     for (let j = 0; j < chunk.length; j++) {
