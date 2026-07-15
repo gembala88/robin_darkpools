@@ -6,7 +6,7 @@
 
 import 'dotenv/config';
 import fs from 'node:fs';
-import { Contract, Wallet, parseEther, formatEther, formatUnits, MaxUint256, AbiCoder } from 'ethers';
+import { Contract, Wallet, parseEther, formatEther, formatUnits, AbiCoder } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG } from './config.js';
 import { V3_NFPM_ABI, V4_NFPM_ABI, ERC20_ABI } from './abis.js';
@@ -69,8 +69,8 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
   const colParams = {
     tokenId,
     recipient: wallet.address,
-    amount0Max: MaxUint256,
-    amount1Max: MaxUint256,
+    amount0Max: (1n << 128n) - 1n,
+    amount1Max: (1n << 128n) - 1n,
   };
   const colPop = await nfpm.collect.populateTransaction(colParams);
   try {
@@ -194,11 +194,11 @@ async function withdrawV4(provider, wallet, config) {
 async function main() {
   const provider = await makeProvider();
   let wallet = null;
-  if (process.env.LIVE === '1' && process.env.PRIVATE_KEY) {
+  if (process.env.DRY === '0' && process.env.PRIVATE_KEY) {
     wallet = new Wallet(process.env.PRIVATE_KEY, provider);
     console.log(`Wallet: ${wallet.address}`);
   } else {
-    console.log('DRY-RUN mode. Set LIVE=1 PRIVATE_KEY=0x.. to execute.');
+    console.log('DRY-RUN mode. Set DRY=0 PRIVATE_KEY=0x.. to execute.');
   }
 
   const config = UC('lp');

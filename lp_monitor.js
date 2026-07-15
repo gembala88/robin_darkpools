@@ -15,7 +15,8 @@ const WETH = LP_V3_CASHCAT_WETH.token1;
 const { sqrt } = Math;
 
 const AUTO_CLOSE_DRY = process.env.AUTO_CLOSE_DRY !== '0';
-const LIVE = process.env.LIVE === '1' && process.env.PRIVATE_KEY;
+const FORCE_TRIGGER = process.env.FORCE_TRIGGER === '1';
+const LIVE = process.env.DRY === '0' && process.env.PRIVATE_KEY;
 
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { positions: [], monitor: {} }; }
@@ -114,15 +115,16 @@ async function checkV3(provider, entry, config) {
     shouldNotify: ilExceedsThreshold || outOfRange,
   };
 
-  // AUTO-CLOSE: trigger if IL exceeds threshold + sanity passes
-  if (ilExceedsThreshold && pos.liquidity > 0n) {
-    const msg = `\u{26A0}\u{FE0F} IL=${ilPct.toFixed(2)}% exceeds threshold (-${threshold}%) for #${entry.tokenId}`;
-    console.log(`>>> ${AUTO_CLOSE_DRY ? 'AKAN auto-close' : 'AUTO-CLOSING'} #${entry.tokenId} (IL=${ilPct.toFixed(2)}%)`);
+  // AUTO-CLOSE: trigger if IL exceeds threshold + sanity passes, or FORCE_TRIGGER=1
+  const shouldTrigger = (ilExceedsThreshold && pos.liquidity > 0n) || FORCE_TRIGGER;
+  if (shouldTrigger) {
+    const reason = FORCE_TRIGGER ? 'FORCE_TRIGGER=1' : `IL=${ilPct.toFixed(2)}% < -${threshold}%`;
+    console.log(`>>> ${AUTO_CLOSE_DRY ? 'AKAN auto-close' : 'AUTO-CLOSING'} #${entry.tokenId} (${reason})`);
 
     if (AUTO_CLOSE_DRY) {
       await tg(`\u{1F514} LP Monitor — AUTO-CLOSE DRY\n` +
         `Position #${entry.tokenId} (${result.pool})\n` +
-        `IL: ${ilPct.toFixed(2)}% (threshold: -${threshold}%)\n` +
+        `Trigger: ${reason}\n` +
         `AKAN di-close otomatis jika AUTO_CLOSE_DRY=0`).catch(() => {});
     } else if (LIVE) {
       const wallet = new Wallet(process.env.PRIVATE_KEY, provider);

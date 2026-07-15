@@ -104,7 +104,7 @@ async function depositV3(provider, wallet, config) {
   const slot0 = await provider.call({ to: LP_V3_CASHCAT_WETH.pool, data: '0x3850c7bd' });
   const [sqrtPriceX96] = AbiCoder.defaultAbiCoder().decode(['uint160'], slot0.slice(0, 66));
 
-  const walletAddr = wallet?.address || NATIVE;
+  const walletAddr = wallet?.address || (process.env.PRIVATE_KEY ? new Wallet(process.env.PRIVATE_KEY).address : NATIVE);
   const cashcatBalance = await cashcat.balanceOf(walletAddr);
   const wethBalance = await weth.balanceOf(walletAddr);
 
@@ -116,8 +116,6 @@ async function depositV3(provider, wallet, config) {
   const amount0Desired = cashcatBalance;
   const amount1Desired = wethBalance;
   const slippagePct = BigInt(config.slippagePct);
-  const amount0Min = amount0Desired - (amount0Desired * slippagePct) / 100n;
-  const amount1Min = amount1Desired - (amount1Desired * slippagePct) / 100n;
   const deadline = BigInt(Math.floor(Date.now() / 1000) + config.deadlineSec);
 
   // Detailed liquidity debug
@@ -145,6 +143,9 @@ async function depositV3(provider, wallet, config) {
   console.log(`  L = min(L0, L1) = ${expectedLiquidity}  (${expectedLiquidity === L0_debug ? 'L0-constrained (CASHCAT side)' : 'L1-constrained (WETH side)'})`);
   console.log(`  Implied amount0 used: ${formatEther(implied0)} CASHCAT`);
   console.log(`  Implied amount1 used: ${formatEther(implied1)} WETH`);
+  // Fix: amount0Min/amount1Min dari implied (jumlah nyata L pakai), BUKAN dari input mentah
+  const amount0Min = implied0 - (implied0 * slippagePct) / 100n;
+  const amount1Min = implied1 - (implied1 * slippagePct) / 100n;
 
   if (!wallet) {
     console.log('  DRY-RUN: no wallet, skipping mint.');
@@ -294,11 +295,11 @@ async function depositV4(provider, wallet, config) {
 async function main() {
   const provider = await makeProvider();
   let wallet = null;
-  if (process.env.LIVE === '1' && process.env.PRIVATE_KEY) {
+  if (process.env.DRY === '0' && process.env.PRIVATE_KEY) {
     wallet = new Wallet(process.env.PRIVATE_KEY, provider);
     console.log(`Wallet: ${wallet.address}`);
   } else {
-    console.log('DRY-RUN mode (no real tx). Set LIVE=1 PRIVATE_KEY=0x.. to execute.');
+    console.log('DRY-RUN mode (no real tx). Set DRY=0 PRIVATE_KEY=0x.. to execute.');
   }
 
   const config = UC('lp');
