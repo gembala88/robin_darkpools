@@ -103,7 +103,7 @@ async function depositV3(provider, wallet, config) {
   const slot0 = await provider.call({ to: LP_V3_CASHCAT_WETH.pool, data: '0x3850c7bd' });
   const [sqrtPriceX96] = AbiCoder.defaultAbiCoder().decode(['uint160'], slot0.slice(0, 66));
 
-  const walletAddr = wallet?.address || (process.env.PRIVATE_KEY ? new Wallet(process.env.PRIVATE_KEY).address : NATIVE);
+  const walletAddr = wallet?.address || NATIVE;
   const cashcatBalance = await cashcat.balanceOf(walletAddr);
   const wethBalance = await weth.balanceOf(walletAddr);
 
@@ -224,7 +224,7 @@ async function depositV4(provider, wallet, config) {
   console.log(`  Range: ${tickLower} → ${tickUpper} (-${config.rangeDownPct}% → 0%)`);
 
   const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
-  const walletAddr = wallet?.address || (process.env.PRIVATE_KEY ? new Wallet(process.env.PRIVATE_KEY).address : NATIVE);
+  const walletAddr = wallet?.address || NATIVE;
   const cashcatBalance = await cashcat.balanceOf(walletAddr);
   console.log(`  CASHCAT balance: ${formatEther(cashcatBalance)}`);
 
@@ -316,7 +316,7 @@ async function main() {
   if (process.env.SKIP_SWAP !== '1') {
     console.log('\n--- Step 1: Swap ETH → CASHCAT (if needed) ---');
     const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
-    const bal = await cashcat.balanceOf(wallet?.address || (process.env.PRIVATE_KEY ? new Wallet(process.env.PRIVATE_KEY).address : NATIVE));
+    const bal = await cashcat.balanceOf(wallet?.address || NATIVE);
     console.log(`  Current CASHCAT balance: ${formatEther(bal)}`);
     if (bal === 0n && wallet) {
       console.log('  ⚠️ No CASHCAT balance. Run lp_swap.js first or set SKIP_SWAP=1.');
