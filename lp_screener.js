@@ -37,12 +37,13 @@ const DS_SEARCH_TERMS = cfgDS('searchTerms') || ['robinhood', 'cashcat', 'ROBINH
 
 // ===== SCORE WEIGHTS =====
 const W = {
-  volumeTvlRatio: 30,
-  swaps24h:       25,
-  tvlUsd:         20,
+  volumeTvlRatio: 25,
+  swaps24h:       20,
+  tvlUsd:         15,
   ageDays:        10,
   priceChange:     5,
   gmgnClean:      10,
+  momentum5m:     15,
 };
 
 // ===== DEXSCREENER FETCH =====
@@ -210,6 +211,9 @@ function poolFromDSPair(p) {
     swaps24h: (txns.buys || 0) + (txns.sells || 0),
     buys24h: txns.buys || 0,
     sells24h: txns.sells || 0,
+    m5vol: p.volume?.m5 || 0,
+    m5buys: p.txns?.m5?.buys || 0,
+    m5sells: p.txns?.m5?.sells || 0,
     priceChange24h: p.priceChange?.h24 ?? null,
     fdv: p.fdv || 0,
     marketCap: p.marketCap || 0,
@@ -245,7 +249,10 @@ async function updatePoolData() {
       po.swaps24h = (txns.buys || 0) + (txns.sells || 0);
       po.buys24h = txns.buys || 0;
       po.sells24h = txns.sells || 0;
-      po.priceChange24h = p.priceChange?.h24 ?? null;
+        po.priceChange24h = p.priceChange?.h24 ?? null;
+        po.m5vol = p.volume?.m5 || 0;
+        po.m5buys = p.txns?.m5?.buys || 0;
+        po.m5sells = p.txns?.m5?.sells || 0;
       po.fdv = p.fdv || 0;
       po.marketCap = p.marketCap || 0;
       po.lastUpdated = Date.now();
@@ -273,21 +280,24 @@ function computeScore(po) {
   const vol = po.volume24h || 0;
   const swaps = po.swaps24h || 0;
   const ageDays = po.pairCreatedAt ? (Date.now() - po.pairCreatedAt) / 86400000 : 0;
+  const m5swaps = (po.m5buys || 0) + (po.m5sells || 0);
 
-  // Volume/TVL ratio (efficient liquidity utilization)
+  // TVL score (log scale: $1k=0, $10k=20, $100k=40, $1M=60, $10M=80, $100M=100)
+  const tvlScore = Math.min(Math.max(0, Math.log10(Math.max(tvl, 1000) / 1000) * 20), 100) * (W.tvlUsd / 100);
+
+  // Volume/TVL ratio with minimum TVL guard
+  // If TVL < $50k, penalize ratio contribution (prevents small-TVLe pool from winning on ratio alone)
+  const tvlGuard = Math.min(tvl / 50000, 1);
   const volTvlRatio = tvl > 0 ? vol / tvl : 0;
-  const volTvlScore = Math.min(volTvlRatio * 10, 100) * (W.volumeTvlRatio / 100);
+  const volTvlScore = Math.min(volTvlRatio * 10, 100) * tvlGuard * (W.volumeTvlRatio / 100);
 
-  // Swap count score
+  // Swap count (24h)
   const swapScore = Math.min(swaps / 1000, 100) * (W.swaps24h / 100);
 
-  // TVL score (prefer meaningful liquidity)
-  const tvlScore = Math.min(tvl / 10000, 100) * (W.tvlUsd / 100);
-
-  // Age score (prefer newer pools — more opportunity)
+  // Age score (prefer newer pools)
   const ageScore = Math.max(0, Math.min((30 - ageDays) / 30 * 100, 100)) * (W.ageDays / 100);
 
-  // Price change stability (avoid extreme volatility)
+  // Price change stability
   let pcScore = 50;
   const pc = po.priceChange24h;
   if (pc !== null && pc !== undefined) {
@@ -297,20 +307,28 @@ function computeScore(po) {
   }
   const priceScore = pcScore * (W.priceChange / 100);
 
-  // GMGN (optional)
+  // GMGN
   const gmgnScore = (po.gmgnChecked && !po.gmgnFlags?.length) ? (W.gmgnClean / 100) * 100 : 0;
 
-  const total = volTvlScore + swapScore + tvlScore + ageScore + priceScore + gmgnScore;
+  // Momentum 5min (active right now)
+  let m5Score = 0;
+  if (m5swaps > 0) {
+    const m5vol = po.m5vol || 0;
+    m5Score = Math.min(Math.log10(m5swaps + 1) * 33, 100) * (W.momentum5m / 100);
+  }
+
+  const total = volTvlScore + swapScore + tvlScore + ageScore + priceScore + gmgnScore + m5Score;
 
   return {
     score: Math.round(total),
     breakdown: {
+      tvl: Math.round(tvlScore),
       volTvlRatio: Math.round(volTvlScore),
       swaps: Math.round(swapScore),
-      tvl: Math.round(tvlScore),
       age: Math.round(ageScore),
       price: Math.round(priceScore),
       gmgn: Math.round(gmgnScore),
+      momentum5m: Math.round(m5Score),
     },
     volTvlRatio,
   };
