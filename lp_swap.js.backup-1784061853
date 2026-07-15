@@ -38,7 +38,7 @@ async function simulateV4Swap(provider, ethAmount) {
 async function buildV3SwapTx(wallet, ethAmount, cashcatAmountMin) {
   const router = new Contract(V3.swapRouter02, V3_SWAP_ROUTER_ABI, wallet);
   // FIXED: Robinhood fork's ExactInputSingleParams has NO deadline
-  const params = [WETH, CASHCAT, 10000, wallet.address, ethAmount, cashcatAmountMin, 0n];
+  const params = [NATIVE, CASHCAT, 10000, wallet.address, ethAmount, cashcatAmountMin, 0n];
   const tx = await router.exactInputSingle.populateTransaction(params);
   tx.value = ethAmount;
   return tx;
@@ -92,8 +92,8 @@ async function main() {
 
   console.log(`Amount out min (${slippagePct}% slip): ${formatEther(amountOutMin)} CASHCAT`);
 
-  if (CFG.dry || !process.env.PRIVATE_KEY) {
-    console.log('\nDRY-RUN: no tx sent. Set DRY=0 PRIVATE_KEY=0x.. to execute (independent of arb LIVE flag).');
+  if (!CFG.live || !process.env.PRIVATE_KEY) {
+    console.log('\nDRY-RUN: no tx sent. Set LIVE=1 PRIVATE_KEY=0x.. to execute.');
     process.exit(0);
   }
 

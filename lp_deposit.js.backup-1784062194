@@ -274,12 +274,11 @@ async function depositV4(provider, wallet, config) {
 async function main() {
   const provider = await makeProvider();
   let wallet = null;
-  const isDry = process.env.DRY !== '0';
-  if (!isDry && process.env.PRIVATE_KEY) {
+  if (process.env.LIVE === '1' && process.env.PRIVATE_KEY) {
     wallet = new Wallet(process.env.PRIVATE_KEY, provider);
     console.log(`Wallet: ${wallet.address}`);
   } else {
-    console.log('DRY-RUN mode (no real tx). Set DRY=0 PRIVATE_KEY=0x.. to execute (independent of arb LIVE flag).');
+    console.log('DRY-RUN mode (no real tx). Set LIVE=1 PRIVATE_KEY=0x.. to execute.');
   }
 
   const config = UC('lp');

@@ -96,29 +96,26 @@ class FallbackProvider extends JsonRpcProvider {
 
   // Override the low-level _send — ALL provider methods funnel through here
   async _send(request) {
-    const now = Date.now();
-    // Only ATTEMPT primary again after cooldown — and only log recovered if primary itself succeeds
-    if (this._mode === 'fallback' && now - this._switchTime > this._cooldownMs) {
+    // Try to recover primary after cooldown
+    if (this._mode === 'fallback' && Date.now() - this._switchTime > this._cooldownMs) {
       console.log('RPC fallback: cooldown expired, retrying primary');
-      try {
-        const result = await this._pri._send(request);
-        console.log('RPC fallback: primary recovered');
-        this._mode = 'primary';
-        return result;
-      } catch (err) {
-        this._switchTime = now; // still down — restart 5min quiet period
-        return this._sec._send(request);
-      }
+      this._mode = 'primary';
     }
+
     const provider = this._mode === 'primary' ? this._pri : this._sec;
     try {
-      return await provider._send(request);
+      const result = await provider._send(request);
+      if (this._mode === 'fallback') {
+        console.log('RPC fallback: primary recovered');
+        this._mode = 'primary';
+      }
+      return result;
     } catch (err) {
       if (this._mode === 'fallback') throw err; // fallback also failed
       const msg = err.shortMessage || err.message || String(err);
       console.log(`RPC fallback: primary error (${msg.slice(0, 80)}) — switching to fallback for 5min`);
       this._mode = 'fallback';
-      this._switchTime = now;
+      this._switchTime = Date.now();
       return this._sec._send(request);
     }
   }

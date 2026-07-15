@@ -265,19 +265,12 @@ async function main() {
   let busy = false, lastLog = 0, lastGasRefresh = 0;
   async function tick(trigger = 'poll') {
     if (busy) return;
-    const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('rpc timeout ' + ms + 'ms')), ms))]);
     // Refresh gas price every 15s so profit calcuses current on-chain cost
     if (Date.now() - lastGasRefresh > 15000) {
-      const fd = await withTimeout(provider.getFeeData(), 10000).catch(() => null);
+      const fd = await provider.getFeeData().catch(() => null);
       if (fd) { gasCost = (fd.gasPrice ?? fd.maxFeePerGas ?? 100000000n) * CFG.gasUnits; lastGasRefresh = Date.now(); }
     }
-    let all;
-    try {
-      all = await withTimeout(scanAll(), 15000);
-    } catch (e) {
-      console.log('    scan timeout/error (ignored, retry next tick):', e.shortMessage || e.message);
-      return;
-    }
+    const all = await scanAll();
     if (!all.length) return;
     const b = all[0];
     const bps = b.size > 0n ? (b.net * 10000n) / b.size : 0n;

@@ -265,19 +265,12 @@ async function main() {
   let busy = false, lastLog = 0, lastGasRefresh = 0;
   async function tick(trigger = 'poll') {
     if (busy) return;
-    const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('rpc timeout ' + ms + 'ms')), ms))]);
     // Refresh gas price every 15s so profit calcuses current on-chain cost
     if (Date.now() - lastGasRefresh > 15000) {
-      const fd = await withTimeout(provider.getFeeData(), 10000).catch(() => null);
+      const fd = await provider.getFeeData().catch(() => null);
       if (fd) { gasCost = (fd.gasPrice ?? fd.maxFeePerGas ?? 100000000n) * CFG.gasUnits; lastGasRefresh = Date.now(); }
     }
-    let all;
-    try {
-      all = await withTimeout(scanAll(), 15000);
-    } catch (e) {
-      console.log('    scan timeout/error (ignored, retry next tick):', e.shortMessage || e.message);
-      return;
-    }
+    const all = await scanAll();
     if (!all.length) return;
     const b = all[0];
     const bps = b.size > 0n ? (b.net * 10000n) / b.size : 0n;
@@ -287,6 +280,7 @@ async function main() {
       if (!CFG.live || !wallet) { console.log('    (idle: dry-run/no wallet)'); return; }
       // Circuit breaker: pause after N consecutive failures
       if (!await checkCircuitBreaker()) { console.log('    (paused — circuit breaker active)'); return; }
+      CB.fails = 0; // reset on any opportunity check (resets after cooldown too)
       // Balance check: skip if executor/wallet can't cover size + gas
       const bcAddr = CFG.executor || wallet.address;
       const bcBal = await provider.getBalance(bcAddr).catch(() => 0n);
@@ -301,7 +295,6 @@ async function main() {
         // hard 120s cap: a hung RPC inside execute() must never leave busy=true
         // and stall the bot past the next window (that missed a live opportunity).
         await Promise.race([execute(b), new Promise((_, rej) => setTimeout(() => rej(new Error('execute timeout 120s')), 120000))]);
-        CB.fails = 0; // reset HANYA setelah eksekusi terkonfirmasi sukses (tidak throw)
       } catch (e) {
         console.log('    exec FAILED:', e.shortMessage || e.message);
         notifyError(`${b.market.symbol} (${b.market.token.slice(0,8)}…) ${b.tag}: ${e.shortMessage || e.message}`).catch(() => {});

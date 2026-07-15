@@ -69,8 +69,8 @@ async function withdrawV3(provider, wallet, tokenId, config) {
   const colParams = {
     tokenId,
     recipient: wallet.address,
-    amount0Max: (1n << 128n) - 1n,
-    amount1Max: (1n << 128n) - 1n,
+    amount0Max: MaxUint256,
+    amount1Max: MaxUint256,
   };
   const colPop = await nfpm.collect.populateTransaction(colParams);
   try {
