@@ -1,17 +1,21 @@
 import 'dotenv/config';
 import fs from 'node:fs';
-import { Contract, formatEther, formatUnits, AbiCoder, keccak256 } from 'ethers';
+import { Contract, Wallet, formatEther, formatUnits, AbiCoder, keccak256 } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, V4, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG } from './config.js';
 import { V3_NFPM_ABI, ERC20_ABI } from './abis.js';
 import { UC } from './config.js';
 import { tg } from './telegram.js';
+import { withdrawV3 } from './lp_withdraw.js';
 
 const abi = AbiCoder.defaultAbiCoder();
 const STATE_FILE = new URL('./lp_state.json', import.meta.url);
 const CASHCAT = LP_V3_CASHCAT_WETH.token0;
 const WETH = LP_V3_CASHCAT_WETH.token1;
 const { sqrt } = Math;
+
+const AUTO_CLOSE_DRY = process.env.AUTO_CLOSE_DRY !== '0';
+const LIVE = process.env.LIVE === '1' && process.env.PRIVATE_KEY;
 
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { positions: [], monitor: {} }; }
@@ -60,6 +64,17 @@ async function getPoolSlot0(provider) {
   return { sqrtPriceX96: Number(sqrtPriceX96), tick: Number(tick) };
 }
 
+// Sanity: validate IL input data is not corrupted by RPC glitch
+function sanityCheck(pos, currentTick, sqrtPriceX96) {
+  if (!pos) return 'position null';
+  if (pos.liquidity === 0n) return 'liquidity zero';
+  if (typeof currentTick !== 'number' || isNaN(currentTick)) return 'invalid currentTick';
+  if (typeof pos.tickLower === 'undefined' || typeof pos.tickUpper === 'undefined') return 'missing tick bounds';
+  if (!sqrtPriceX96 || sqrtPriceX96 <= 0) return 'invalid sqrtPriceX96';
+  return null;
+}
+
+// Check IL and trigger auto-close if needed (V3 only)
 async function checkV3(provider, entry, config) {
   if (!entry?.tokenId) return null;
   const tokenId = BigInt(entry.tokenId);
@@ -67,8 +82,14 @@ async function checkV3(provider, entry, config) {
   if (!pos) return { error: 'position burned or not found' };
 
   const { tick: currentTick, sqrtPriceX96 } = await getPoolSlot0(provider);
+
+  // SANITY GUARD: reject glitch data
+  const sanity = sanityCheck(pos, currentTick, sqrtPriceX96);
+  if (sanity) return { error: sanity };
+
   const price = tickToPrice(currentTick);
-  const entryPrice = tickToPrice(Number(entry._entryTick ?? currentTick));
+  const entryTick = Number(entry.entryTick ?? currentTick);
+  const entryPrice = tickToPrice(entryTick);
 
   const ilPct = ilConcentrated(entryPrice, price, Number(pos.tickLower), Number(pos.tickUpper)) * 100;
   const feeValueEth = Number(formatEther(pos.tokensOwed1)) + Number(formatUnits(pos.tokensOwed0, 18)) * price;
@@ -76,7 +97,7 @@ async function checkV3(provider, entry, config) {
   const threshold = Number(config.ilExitThresholdPct);
   const ilExceedsThreshold = ilPct < -threshold;
 
-  return {
+  const result = {
     dex: 'V3',
     pool: LP_V3_CASHCAT_WETH.symbol,
     tokenId: entry.tokenId,
@@ -92,6 +113,36 @@ async function checkV3(provider, entry, config) {
     ilExceedsThreshold,
     shouldNotify: ilExceedsThreshold || outOfRange,
   };
+
+  // AUTO-CLOSE: trigger if IL exceeds threshold + sanity passes
+  if (ilExceedsThreshold && pos.liquidity > 0n) {
+    const msg = `\u{26A0}\u{FE0F} IL=${ilPct.toFixed(2)}% exceeds threshold (-${threshold}%) for #${entry.tokenId}`;
+    console.log(`>>> ${AUTO_CLOSE_DRY ? 'AKAN auto-close' : 'AUTO-CLOSING'} #${entry.tokenId} (IL=${ilPct.toFixed(2)}%)`);
+
+    if (AUTO_CLOSE_DRY) {
+      await tg(`\u{1F514} LP Monitor — AUTO-CLOSE DRY\n` +
+        `Position #${entry.tokenId} (${result.pool})\n` +
+        `IL: ${ilPct.toFixed(2)}% (threshold: -${threshold}%)\n` +
+        `AKAN di-close otomatis jika AUTO_CLOSE_DRY=0`).catch(() => {});
+    } else if (LIVE) {
+      const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
+      await tg(`\u{1F534} AUTO-CLOSING position #${entry.tokenId}\nIL: ${ilPct.toFixed(2)}%`).catch(() => {});
+      try {
+        await withdrawV3(provider, wallet, tokenId, config);
+        result.autoClosed = true;
+        await tg(`\u{2705} AUTO-CLOSED #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
+          `Lihat wallet untuk hasil withdraw.`).catch(() => {});
+      } catch (e) {
+        const errMsg = e.shortMessage || e.message || String(e);
+        result.autoCloseFailed = errMsg;
+        await tg(`\u{274C} AUTO-CLOSE FAILED #${entry.tokenId}: ${errMsg.slice(0,120)}`).catch(() => {});
+      }
+    } else {
+      console.log('    (skip: not LIVE, set LIVE=1 PRIVATE_KEY=0x.. to auto-close)');
+    }
+  }
+
+  return result;
 }
 
 async function checkV4(provider, entry, config) {
@@ -130,6 +181,7 @@ async function monitorOnce(provider, config) {
 
   console.log(`\n=== LP Monitor ${new Date().toISOString()} ===`);
   let anyFail = false;
+  const toRemove = [];
 
   for (const entry of state.positions) {
     if (entry.dex === 'V3') {
@@ -144,7 +196,10 @@ async function monitorOnce(provider, config) {
       const statusIcon = result.outOfRange ? 'OUT' : 'IN';
       console.log(`  V3 #${result.tokenId}: IL=${result.ilPct.toFixed(2)}% fee=${result.feeValueEth.toFixed(6)}ETH liq=${result.liquidity.slice(0,8)} range=${rangePct}% [${statusIcon}]`);
 
-      if (result.shouldNotify) {
+      // Suppress generic notify if auto-close already sent its own message
+      if (result.autoClosed || result.autoCloseFailed) {
+        if (result.autoClosed) toRemove.push(entry);
+      } else if (result.shouldNotify) {
         const parts = [
           `\u{1F514} LP Monitor: ${result.pool} #${result.tokenId}`,
           `IL: ${result.ilPct.toFixed(2)}% (threshold: -${config.ilExitThresholdPct}%)`,
@@ -165,7 +220,12 @@ async function monitorOnce(provider, config) {
     }
   }
 
-  // Circuit breaker: persist consecutive failures
+  // Clean up auto-closed positions from state
+  if (toRemove.length > 0) {
+    state.positions = state.positions.filter(p => !toRemove.includes(p));
+    console.log(`  Cleaned ${toRemove.length} auto-closed position(s) from state`);
+  }
+
   if (anyFail) {
     state.monitor.consecutiveFails++;
   } else {
@@ -185,6 +245,8 @@ async function main() {
   const provider = await makeProvider();
   const config = UC('lp');
   const isWatch = process.env.WATCH === '1';
+
+  console.log(`Auto-close: ${AUTO_CLOSE_DRY ? 'DRY-RUN (AUTO_CLOSE_DRY=1)' : 'LIVE (AUTO_CLOSE_DRY=0)'}`);
 
   if (isWatch) {
     console.log(`Continuous monitoring every ${config.monitorIntervalMs}ms. Ctrl+C to stop.`);
