@@ -241,7 +241,7 @@ async function main() {
     }
   }
 
-  if (!wallet) console.log('\nDRY-RUN complete.');
+  if (!wallet) console.log('\nDRY-RUN complete. To execute: DRY=0 PRIVATE_KEY=0x.. node lp_withdraw.js');
 }
 
 // Only auto-execute if this is the main module (not imported)

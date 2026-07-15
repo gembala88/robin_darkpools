@@ -140,7 +140,7 @@ async function checkV3(provider, entry, config) {
         await tg(`\u{274C} AUTO-CLOSE FAILED #${entry.tokenId}: ${errMsg.slice(0,120)}`).catch(() => {});
       }
     } else {
-      console.log('    (skip: not LIVE, set LIVE=1 PRIVATE_KEY=0x.. to auto-close)');
+      console.log('    (skip: not live, set DRY=0 PRIVATE_KEY=0x.. to auto-close)');
     }
   }
 

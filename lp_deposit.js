@@ -341,7 +341,7 @@ async function main() {
   if (posV3) console.log(`V3: token0=CASHCAT token1=WETH fee=10000 tickL=${posV3.tickLower} tickU=${posV3.tickUpper}`);
   if (posV4) console.log(`V4: currency0=${posV4.key?.currency0?.slice(0,10)||'?'} currency1=${posV4.key?.currency1?.slice(0,10)||'?'}`);
 
-  if (!wallet) console.log('\nDRY-RUN complete. To execute: LIVE=1 PRIVATE_KEY=0x.. node lp_deposit.js');
+  if (!wallet) console.log('\nDRY-RUN complete. To execute: DRY=0 PRIVATE_KEY=0x.. node lp_deposit.js');
 }
 
 main().catch(e => { console.error('FAILED:', e.shortMessage || e.message); process.exit(1); });
