@@ -736,7 +736,7 @@ async function refreshAllCurves(provider) {
 
 async function main() {
   console.log('RobinArb Screener v2 — expanded screening + LLM decision layer\n');
-  const provider = await makeProvider();
+  const provider = await makeProvider('SCREENER_RPC_URL');
   const chainId = (await provider.getNetwork()).chainId;
   console.log(`chainId: ${chainId}`);
 

@@ -296,7 +296,7 @@ async function depositV4(provider, wallet, config) {
 }
 
 async function main() {
-  const provider = await makeProvider();
+  const provider = await makeProvider('LP_RPC_URL');
   let wallet = null;
   const isDry = process.env.DRY !== '0';
   if (!isDry && process.env.PRIVATE_KEY) {

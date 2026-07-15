@@ -18,7 +18,7 @@ const CASHCAT = LP_V3_CASHCAT_WETH.token0;
 const WETH = LP_V3_CASHCAT_WETH.token1;
 
 async function main() {
-  const provider = await makeProvider();
+  const provider = await makeProvider('LP_RPC_URL');
   const amountCashcatEth = parseEther(String(process.env.AMOUNT_CASHCAT_ETH || UC('lp.lpAmountEthCashcat')));
   const amountWethEth = parseEther(String(process.env.AMOUNT_WETH_ETH || UC('lp.lpAmountEthWeth')));
   const slippagePct = BigInt(process.env.SLIPPAGE_PCT || UC('lp.slippagePct'));

@@ -126,14 +126,15 @@ class FallbackProvider extends JsonRpcProvider {
 
 // ===== PROVIDER FACTORY =====
 
-export async function makeProvider() {
+export async function makeProvider(envKey = 'RPC_URL') {
   const net = new Network(CHAIN.name, CHAIN.id);
   const opts = { staticNetwork: net, batchMaxCount: 1 };
+  const rpcUrl = process.env[envKey] || process.env.RPC_URL;
 
   // --- Build primary provider ---
   let primary;
-  if (process.env.RPC_URL) {
-    primary = new JsonRpcProvider(process.env.RPC_URL, net, opts);
+  if (rpcUrl) {
+    primary = new JsonRpcProvider(rpcUrl, net, opts);
   } else {
     let ips = await resolveViaDoH(CHAIN.rpcHost);
     if (!ips.length) ips = CHAIN.rpcIps;

@@ -89,7 +89,7 @@ function loadMarkets() {
 }
 
 async function main() {
-  const provider = await makeProvider();
+  const provider = await makeProvider('ARB_RPC_URL');
   provider.pollingInterval = Number(process.env.EVENT_POLL_MS || 6000); // Swap-event getLogs cadence
   const wallet = process.env.PRIVATE_KEY ? new Wallet(process.env.PRIVATE_KEY, provider) : null;
   const runner = wallet || provider;

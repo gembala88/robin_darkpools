@@ -244,7 +244,7 @@ async function monitorOnce(provider, config) {
 }
 
 async function main() {
-  const provider = await makeProvider();
+  const provider = await makeProvider('LP_RPC_URL');
   const config = UC('lp');
   const isWatch = process.env.WATCH === '1';
 
