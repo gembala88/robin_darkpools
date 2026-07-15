@@ -1,9 +1,10 @@
 {
   "_comment": [
-    "All settings LIVE here \u2014 NO hardcoded defaults in code.",
+    "All settings LIVE here — NO hardcoded defaults in code.",
     ".env stores SECRETS only (API keys, bot tokens).",
     "This file is safe to commit (no secrets)."
   ],
+
   "--- SCREENING CRITERIA ---": "Minimum thresholds a token must pass",
   "minGraduationPct": 10,
   "minAgeHours": 1,
@@ -12,6 +13,7 @@
   "minBuyerDistribution": 10,
   "maxSellBuyRatio": 0.8,
   "volumeDropThreshold": 0.5,
+
   "--- TIMING ---": "All timing intervals in milliseconds / seconds / hours",
   "pollMs": 30000,
   "refreshCurvesSec": 120,
@@ -19,25 +21,29 @@
   "volumeWindowHours": 1,
   "stateSaveInterval": 60000,
   "periodicHours": 6,
+
   "--- HISTORICAL SCAN ---": "Initial scan tuning (rate-limit safe)",
   "scanChunkSize": 200000,
   "scanDelayMs": 300,
   "maxRetryDelay": 30000,
+
   "--- LLM EVALUATION ---": "AI agent for advanced token analysis",
   "llmScoreMin": 50,
   "llmCooldownHours": 6,
   "llmProvider": "nvidia",
   "llmModel": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+
   "--- SCORE WEIGHTS ---": "Composite score = weighted sum of these factors",
   "scoreWeights": {
-    "graduation": 0.3,
-    "buyers": 0.4,
+    "graduation": 0.30,
+    "buyers": 0.40,
     "buyerCap": 50,
     "volumeScale": 6,
     "volumeCap": 20,
     "distribution": 0.15,
     "sellRatio": 0.15
   },
+
   "--- SAFETY / SCAM PROTECTION ---": "Additional filters to reject scam tokens",
   "safety": {
     "maxTaxBps": 200,
@@ -47,23 +53,29 @@
     "honeypotTestEnabled": false,
     "minUniqueBuyersSafety": 1
   },
+
   "--- ARB BOT (shared) ---": "Used by arb.js, not screener.js",
   "maxConsecutiveFails": 3,
   "circuitBreakerCooldownMin": 30,
   "gasUnits": 700000,
   "eoaFallbackEnabled": false,
+
   "--- LP DEPOSIT/WITHDRAW ---": "All settings for V3+V4 LP positions",
   "lp": {
     "enableV3CashcatWeth": true,
     "enableV4CashcatUsdg": false,
+
     "lpAmountEthCashcat": 0.01,
     "lpAmountEthWeth": 0.01,
+
     "rangeSymmetricPct": 15,
     "rangeDownPct": 20,
     "slippagePct": 1,
     "deadlineSec": 300,
+
     "ilExitThresholdPct": 5,
     "monitorIntervalMs": 60000,
+
     "maxConsecutiveFails": 3,
     "circuitBreakerCooldownMin": 30
   }

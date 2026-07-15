@@ -149,6 +149,9 @@ async function depositV3(provider, wallet, config) {
   console.log(`  L = min(L0, L1) = ${expectedLiquidity}  (${expectedLiquidity === L0_debug ? 'L0-constrained (CASHCAT side)' : 'L1-constrained (WETH side)'})`);
   console.log(`  Implied amount0 used: ${formatEther(implied0)} CASHCAT`);
   console.log(`  Implied amount1 used: ${formatEther(implied1)} WETH`);
+  // Fix: amount0Min/amount1Min dari implied (jumlah nyata L pakai), BUKAN dari input mentah
+  const amount0Min = implied0 - (implied0 * slippagePct) / 100n;
+  const amount1Min = implied1 - (implied1 * slippagePct) / 100n;
 
   if (!wallet) {
     console.log('  DRY-RUN: no wallet, skipping mint.');
@@ -345,7 +348,7 @@ async function main() {
   if (posV3) console.log(`V3: token0=CASHCAT token1=WETH fee=10000 tickL=${posV3.tickLower} tickU=${posV3.tickUpper}`);
   if (posV4) console.log(`V4: currency0=${posV4.key?.currency0?.slice(0,10)||'?'} currency1=${posV4.key?.currency1?.slice(0,10)||'?'}`);
 
-  if (!wallet) console.log('\nDRY-RUN complete. To execute: LIVE=1 PRIVATE_KEY=0x.. node lp_deposit.js');
+  if (!wallet) console.log('\nDRY-RUN complete. To execute: DRY=0 PRIVATE_KEY=0x.. node lp_deposit.js');
 }
 
 main().catch(e => { console.error('FAILED:', e.shortMessage || e.message); process.exit(1); });

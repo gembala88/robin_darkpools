@@ -6,7 +6,7 @@
 
 import 'dotenv/config';
 import fs from 'node:fs';
-import { Contract, Wallet, parseEther, formatEther, formatUnits, MaxUint256, AbiCoder } from 'ethers';
+import { Contract, Wallet, parseEther, formatEther, formatUnits, AbiCoder } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG } from './config.js';
 import { V3_NFPM_ABI, V4_NFPM_ABI, ERC20_ABI } from './abis.js';
@@ -242,7 +242,7 @@ async function main() {
     }
   }
 
-  if (!wallet) console.log('\nDRY-RUN complete.');
+  if (!wallet) console.log('\nDRY-RUN complete. To execute: DRY=0 PRIVATE_KEY=0x.. node lp_withdraw.js');
 }
 
 // Only auto-execute if this is the main module (not imported)
