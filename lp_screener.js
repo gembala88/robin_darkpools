@@ -37,13 +37,13 @@ const DS_SEARCH_TERMS = cfgDS('searchTerms') || ['robinhood', 'cashcat', 'ROBINH
 
 // ===== SCORE WEIGHTS =====
 const W = {
-  volumeTvlRatio: 25,
+  volumeTvlRatio: 10,
   swaps24h:       20,
-  tvlUsd:         15,
+  tvlUsd:         25,
   ageDays:        10,
   priceChange:     5,
   gmgnClean:      10,
-  momentum5m:     15,
+  momentum5m:     20,
 };
 
 // ===== DEXSCREENER FETCH =====
@@ -285,11 +285,11 @@ function computeScore(po) {
   // TVL score (log scale: $1k=0, $10k=20, $100k=40, $1M=60, $10M=80, $100M=100)
   const tvlScore = Math.min(Math.max(0, Math.log10(Math.max(tvl, 1000) / 1000) * 20), 100) * (W.tvlUsd / 100);
 
-  // Volume/TVL ratio with minimum TVL guard
-  // If TVL < $50k, penalize ratio contribution (prevents small-TVLe pool from winning on ratio alone)
+  // Volume/TVL ratio with log scale (diminishes extreme ratio advantage) + minimum TVL guard
   const tvlGuard = Math.min(tvl / 50000, 1);
   const volTvlRatio = tvl > 0 ? vol / tvl : 0;
-  const volTvlScore = Math.min(volTvlRatio * 10, 100) * tvlGuard * (W.volumeTvlRatio / 100);
+  const volRaw = Math.min(Math.log10(Math.max(volTvlRatio, 0.1) + 1) * 50, 100);
+  const volTvlScore = volRaw * tvlGuard * (W.volumeTvlRatio / 100);
 
   // Swap count (24h)
   const swapScore = Math.min(swaps / 1000, 100) * (W.swaps24h / 100);
