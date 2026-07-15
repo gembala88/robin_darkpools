@@ -352,154 +352,184 @@ function getHHIProvider() {
  * Samples the first N unique Pool Mint txs, finds NFPM tokenIds and their owners,
  * then computes HHI. Caches result in poolState.hhiScore / hhiData.
  * Returns penalty points (0 to -50).
+ * Wrapped in a 180s timeout to prevent hanging on RPC issues.
  */
 async function computeHHIPenalty(poolAddr, poolState) {
   if (poolState.hhiChecked) return (poolState.hhiPenalty || 0);
   if (poolState.hhiChecking) return 0; // already being checked
 
   poolState.hhiChecking = true;
-  try {
-    const provider = await getHHIProvider();
-    const head = await provider.getBlockNumber();
-    const step = 500_000;
-    const nfpm = new Contract(V3_NFPM, [
-      'function positions(uint256) view returns (uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)'
-    ], provider);
 
-    // Collect unique tx hashes from Pool Mint events (first 200)
-    const mintTxs = [];
-    for (let s = 0; s <= head && mintTxs.length < 200; s += step) {
-      const e = Math.min(s + step - 1, head);
-      try {
-        const logs = await Promise.race([
-          provider.getLogs({ address: poolAddr, topics: [POOL_MINT_SIG], fromBlock: s, toBlock: e }),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('to')), 20000))
-        ]);
-        for (const lg of logs) {
-          if (mintTxs.length >= 200) break;
-          if (!mintTxs.includes(lg.transactionHash)) mintTxs.push(lg.transactionHash);
-        }
-      } catch {}
-    }
-
-    if (mintTxs.length === 0) { poolState.hhiChecked = true; poolState.hhiChecking = false; return 0; }
-
-    // Get tx receipts in batches of 50, find NFPM tokenIds
-    const poolTokenIds = [];
-    for (let i = 0; i < mintTxs.length; i += 50) {
-      const batch = mintTxs.slice(i, i + 50);
-      const receipts = await Promise.allSettled(
-        batch.map(txHash =>
-          Promise.race([
-            provider.getTransactionReceipt(txHash),
-            new Promise((_, rej) => setTimeout(() => rej(new Error('to')), 10000))
-          ]).catch(() => null)
-        )
-      );
-      for (let j = 0; j < receipts.length; j++) {
-        const r = receipts[j];
-        if (r.status !== 'fulfilled' || !r.value) continue;
-        for (const log of r.value.logs) {
-          if (log.address.toLowerCase() !== V3_NFPM.toLowerCase()) continue;
-          if (log.topics[0] !== INC_LIQ_SIG) continue;
-          const tokenId = BigInt(log.topics[1]);
-          if (!poolTokenIds.find(p => p.tokenId === tokenId)) {
-            poolTokenIds.push({ tokenId });
-          }
-          break;
-        }
-      }
-    }
-
-    if (poolTokenIds.length === 0) { poolState.hhiChecked = true; poolState.hhiChecking = false; return 0; }
-
-    // Call positions() to get current liquidity
-    for (let i = 0; i < poolTokenIds.length; i += 100) {
-      const batch = poolTokenIds.slice(i, i + 100);
-      const results = await Promise.allSettled(
-        batch.map(p =>
-          Promise.race([
-            nfpm.positions(p.tokenId),
-            new Promise((_, rej) => setTimeout(() => rej(new Error('to')), 5000))
-          ]).then(pos => ({ ...p, liquidity: pos[7] })).catch(() => ({ ...p, liquidity: 0n }))
-        )
-      );
-      for (let j = 0; j < results.length; j++) {
-        if (results[j].status === 'fulfilled') {
-          poolTokenIds[i + j].liquidity = results[j].value.liquidity;
-        }
-      }
-    }
-
-    // Filter active positions
-    const active = poolTokenIds.filter(p => p.liquidity > 0n);
-    if (active.length < 2) { poolState.hhiChecked = true; poolState.hhiChecking = false; return 0; }
-
-    // Find owners via Transfer events
-    const ownerLiq = {};
-    for (let i = 0; i < active.length; i += 50) {
-      const batch = active.slice(i, i + 50);
-      const results = await Promise.allSettled(
-        batch.map(p => {
-          const topic2 = '0x' + p.tokenId.toString(16).padStart(64, '0');
-          return Promise.race([
-            provider.getLogs({ address: V3_NFPM, topics: [TRANSFER_SIG, null, null, topic2], fromBlock: 0, toBlock: head }),
-            new Promise((_, rej) => setTimeout(() => rej(new Error('to')), 10000))
-          ]).then(logs => {
-            if (logs.length > 0) {
-              return { owner: '0x' + logs[logs.length - 1].topics[2].slice(26), liquidity: p.liquidity };
-            }
-            return null;
-          }).catch(() => null)
-        })
-      );
-      for (const r of results) {
-        if (r.status === 'fulfilled' && r.value && r.value.owner) {
-          const o = r.value.owner.toLowerCase();
-          ownerLiq[o] = (ownerLiq[o] || 0n) + r.value.liquidity;
-        }
-      }
-    }
-
-    const providerCount = Object.keys(ownerLiq).length;
-    const totalLiq = Object.values(ownerLiq).reduce((s, v) => s + v, 0n);
-
-    if (providerCount < 2 || totalLiq === 0n) {
-      poolState.hhiChecked = true;
-      poolState.hhiChecking = false;
-      return 0;
-    }
-
-    // Compute HHI
-    const hhi = Object.values(ownerLiq).reduce((s, liq) => {
-      const share = Number(liq * 10000n / totalLiq) / 100;
-      return s + share * share;
-    }, 0);
-
-    poolState.hhiScore = Math.round(hhi);
-    poolState.hhiProviderCount = providerCount;
+  const result = await Promise.race([
+    _computeHHIImpl(poolAddr, poolState),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('HHI top-level timeout (180s)')), 180000))
+  ]).catch(err => {
+    console.log(`  HHI error for ${poolAddr.slice(0, 14)}: ${err.shortMessage || err.message}`);
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
+    poolState.hhiFailed = (poolState.hhiFailed || 0) + 1;
+    return 0;
+  });
+  return result;
+}
 
-    // Penalty: HHI > 2500 = concentrated. Scale: 0 to -50
-    let penalty = 0;
-    if (hhi > 2500) {
-      penalty = -Math.min(Math.round((hhi - 2500) / 150), 50);
+async function _computeHHIImpl(poolAddr, poolState) {
+  const provider = await getHHIProvider();
+  const head = await provider.getBlockNumber();
+  const step = 500_000;
+  const nfpm = new Contract(V3_NFPM, [
+    'function positions(uint256) view returns (uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)'
+  ], provider);
+
+  // Collect ALL unique tx hashes from Pool Mint events (need the MOST RECENT ones for active positions)
+  const allMintTxs = [];
+  for (let s = 0; s <= head; s += step) {
+    const e = Math.min(s + step - 1, head);
+    try {
+      const logs = await Promise.race([
+        provider.getLogs({ address: poolAddr, topics: [POOL_MINT_SIG], fromBlock: s, toBlock: e }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('getLogs timeout 20s')), 20000))
+      ]);
+      for (const lg of logs) {
+        if (!allMintTxs.includes(lg.transactionHash)) allMintTxs.push(lg.transactionHash);
+      }
+    } catch (err) {
+      console.log(`  HHI getLogs ${s}-${e}: ${err.shortMessage || err.message}`);
     }
-    poolState.hhiPenalty = penalty;
-    poolState.hhiData = {
-      hhi: Math.round(hhi),
-      providers: providerCount,
-      penalty,
-    };
-    console.log(`  HHI for ${poolAddr.slice(0, 10)}: HHI=${Math.round(hhi)} providers=${providerCount} penalty=${penalty}`);
-    return penalty;
-  } catch (err) {
-    console.log(`  HHI check error for ${poolAddr.slice(0, 10)}: ${err.shortMessage || err.message}`);
+  }
+  // Take the LAST 200 unique txs (most recent = active positions)
+  const mintTxs = allMintTxs.slice(-200);
+
+  if (mintTxs.length === 0) {
+    console.log(`  HHI: no Mint events found for ${poolAddr.slice(0, 14)}`);
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
   }
+  console.log(`  HHI: ${mintTxs.length} unique mint txs for ${poolAddr.slice(0, 14)}`);
+
+  // Get tx receipts in batches of 50, find NFPM tokenIds
+  const poolTokenIds = [];
+  for (let i = 0; i < mintTxs.length; i += 50) {
+    const batch = mintTxs.slice(i, i + 50);
+    const receipts = await Promise.allSettled(
+      batch.map(txHash =>
+        Promise.race([
+          provider.getTransactionReceipt(txHash),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('receipt timeout 10s')), 10000))
+        ]).catch(() => null)
+      )
+    );
+    for (let j = 0; j < receipts.length; j++) {
+      const r = receipts[j];
+      if (r.status !== 'fulfilled' || !r.value) continue;
+      for (const log of r.value.logs) {
+        if (log.address.toLowerCase() !== V3_NFPM.toLowerCase()) continue;
+        if (log.topics[0] !== INC_LIQ_SIG) continue;
+        const tokenId = BigInt(log.topics[1]);
+        if (!poolTokenIds.find(p => p.tokenId === tokenId)) {
+          poolTokenIds.push({ tokenId });
+        }
+        break;
+      }
+    }
+  }
+
+  if (poolTokenIds.length === 0) {
+    console.log(`  HHI: no NFPM tokenIds found via tx receipts for ${poolAddr.slice(0, 14)}`);
+    poolState.hhiChecked = true;
+    poolState.hhiChecking = false;
+    return 0;
+  }
+  console.log(`  HHI: ${poolTokenIds.length} unique tokenIds from receipts`);
+
+  // Call positions() to get current liquidity
+  for (let i = 0; i < poolTokenIds.length; i += 20) {
+    const batch = poolTokenIds.slice(i, i + 20);
+    const results = await Promise.allSettled(
+      batch.map(p =>
+        Promise.race([
+          nfpm.positions(p.tokenId),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('positions timeout 10s')), 10000))
+        ]).then(pos => ({ ...p, liquidity: pos[7] })).catch(() => ({ ...p, liquidity: 0n }))
+      )
+    );
+    for (let j = 0; j < results.length; j++) {
+      if (results[j].status === 'fulfilled') {
+        poolTokenIds[i + j].liquidity = results[j].value.liquidity;
+      }
+    }
+  }
+
+  // Filter active positions
+  const active = poolTokenIds.filter(p => p.liquidity > 0n);
+  console.log(`  HHI: ${active.length}/${poolTokenIds.length} positions active`);
+  if (active.length < 2) {
+    poolState.hhiChecked = true;
+    poolState.hhiChecking = false;
+    return 0;
+  }
+
+  // Find owners via Transfer events
+  const ownerLiq = {};
+  for (let i = 0; i < active.length; i += 10) {
+    const batch = active.slice(i, i + 10);
+    const results = await Promise.allSettled(
+      batch.map(p => {
+        const topic2 = '0x' + p.tokenId.toString(16).padStart(64, '0');
+        return Promise.race([
+          provider.getLogs({ address: V3_NFPM, topics: [TRANSFER_SIG, null, null, topic2], fromBlock: 0, toBlock: head }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('transfer logs timeout 10s')), 10000))
+        ]).then(logs => {
+          if (logs.length > 0) {
+            return { owner: '0x' + logs[logs.length - 1].topics[2].slice(26), liquidity: p.liquidity };
+          }
+          return null;
+        }).catch(() => null)
+      })
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value && r.value.owner) {
+        const o = r.value.owner.toLowerCase();
+        ownerLiq[o] = (ownerLiq[o] || 0n) + r.value.liquidity;
+      }
+    }
+  }
+
+  const providerCount = Object.keys(ownerLiq).length;
+  const totalLiq = Object.values(ownerLiq).reduce((s, v) => s + v, 0n);
+
+  if (providerCount < 2 || totalLiq === 0n) {
+    console.log(`  HHI: only ${providerCount} providers found`);
+    poolState.hhiChecked = true;
+    poolState.hhiChecking = false;
+    return 0;
+  }
+
+  // Compute HHI
+  const hhi = Object.values(ownerLiq).reduce((s, liq) => {
+    const share = Number(liq * 10000n / totalLiq) / 100;
+    return s + share * share;
+  }, 0);
+
+  poolState.hhiScore = Math.round(hhi);
+  poolState.hhiProviderCount = providerCount;
+  poolState.hhiChecked = true;
+  poolState.hhiChecking = false;
+
+  // Penalty: HHI > 2500 = concentrated. Scale: 0 to -50
+  let penalty = 0;
+  if (hhi > 2500) {
+    penalty = -Math.min(Math.round((hhi - 2500) / 150), 50);
+  }
+  poolState.hhiPenalty = penalty;
+  poolState.hhiData = {
+    hhi: Math.round(hhi),
+    providers: providerCount,
+    penalty,
+  };
+  console.log(`  HHI for ${poolAddr.slice(0, 14)}: HHI=${Math.round(hhi)} providers=${providerCount} penalty=${penalty}`);
+  return penalty;
 }
 
 // ===== FILTERS =====
@@ -620,12 +650,20 @@ async function evaluatePools() {
 
     // HHI / LP concentration check for candidate pools (once per pool)
     if (po.score >= (cfgSc('minCandidateScore') || 35) && !po.hhiChecked && !po.hhiChecking) {
-      const penalty = await computeHHIPenalty(lc(po.pairAddress), po);
-      if (penalty !== 0) {
-        po.score = Math.max(0, po.score + penalty);
-        console.log(`  >> HHI penalty: ${penalty} → new score=${po.score}`);
-      } else if (po.hhiScore !== undefined) {
-        console.log(`  >> HHI OK: ${po.hhiScore} (no penalty)`);
+      try {
+        const penalty = await computeHHIPenalty(lc(po.pairAddress), po);
+        if (penalty !== 0) {
+          po.score = Math.max(0, po.score + penalty);
+          console.log(`  >> HHI penalty: ${penalty} → new score=${po.score}`);
+        } else if (po.hhiScore !== undefined) {
+          console.log(`  >> HHI OK: ${po.hhiScore} (no penalty)`);
+        }
+      } catch (err) {
+        console.error(`  >> HHI check FAILED for ${po.pairAddress.slice(0, 14)}: ${err.shortMessage || err.message}`);
+        // Mark checked so we don't retry every cycle on the same broken pool
+        po.hhiChecked = true;
+        po.hhiChecking = false;
+        po.hhiFailed = (po.hhiFailed || 0) + 1;
       }
     }
 

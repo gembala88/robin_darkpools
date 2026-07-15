@@ -1,0 +1,2674 @@
+{
+  "pools": {
+    "0xfad2403a6d394803bdd4c008c3cecc9be7d40989": {
+      "pairAddress": "0xfad2403a6d394803bdd4c008c3cecc9be7d40989",
+      "baseToken": {
+        "address": "0x8f100e99ddf699320724e37cb866770381d47382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784092381000,
+      "priceUsd": 0.0006329,
+      "priceNative": "0.0000003280",
+      "tvlUsd": 106323.05,
+      "volume24h": 4392408.84,
+      "swaps24h": 28946,
+      "buys24h": 16116,
+      "sells24h": 12830,
+      "priceChange24h": 23875,
+      "fdv": 632924,
+      "marketCap": 632924,
+      "socials": [
+        {
+          "url": "https://x.com/i/communities/2008772025196679563",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/robinhoodpons",
+          "type": "telegram"
+        }
+      ],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x8aac0c4c9236096aa79262b0a53a683979ed8c7a": {
+      "pairAddress": "0x8aac0c4c9236096aa79262b0a53a683979ed8c7a",
+      "baseToken": {
+        "address": "0x79fe86b963255ce884bdcac6388c50a599ba277f",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1781878516000,
+      "priceUsd": 0.0003294,
+      "priceNative": "0.0000001707",
+      "tvlUsd": 56211.94,
+      "volume24h": 729977.04,
+      "swaps24h": 4076,
+      "buys24h": 2203,
+      "sells24h": 1873,
+      "priceChange24h": -32.21,
+      "fdv": 299080,
+      "marketCap": 299080,
+      "socials": [
+        {
+          "url": "https://x.com/robinhood_meme_",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/robin_hood_meme",
+          "type": "telegram"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://www.rhcat.fun/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x29cecc8d9a1826e26ceece3b8c913c9ecb6bef38fc41bcb91d2eb9e9ebb4262f": {
+      "pairAddress": "0x29cecc8d9a1826e26ceece3b8c913c9ecb6bef38fc41bcb91d2eb9e9ebb4262f",
+      "baseToken": {
+        "address": "0x8f100e99ddf699320724e37cb866770381d47382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+        "name": "Global Dollar",
+        "symbol": "USDG"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784131447000,
+      "priceUsd": 0.0006165,
+      "priceNative": "0.0006149",
+      "tvlUsd": 1323.41,
+      "volume24h": 24044.94,
+      "swaps24h": 724,
+      "buys24h": 371,
+      "sells24h": 353,
+      "priceChange24h": -58.11,
+      "fdv": 616574,
+      "marketCap": 616574,
+      "socials": [
+        {
+          "url": "https://x.com/i/communities/2008772025196679563",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/robinhoodpons",
+          "type": "telegram"
+        }
+      ],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x5ce28f34229e1845adcb1aed7c36adbb842431b47a038ff8582e5ca43f2454be": {
+      "pairAddress": "0x5ce28f34229e1845adcb1aed7c36adbb842431b47a038ff8582e5ca43f2454be",
+      "baseToken": {
+        "address": "0x8f100e99ddf699320724e37cb866770381d47382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+        "name": "Global Dollar",
+        "symbol": "USDG"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784119823000,
+      "priceUsd": 0.0006457,
+      "priceNative": "0.0006443",
+      "tvlUsd": 1503.54,
+      "volume24h": 88.76,
+      "swaps24h": 4,
+      "buys24h": 1,
+      "sells24h": 3,
+      "priceChange24h": 0.81,
+      "fdv": 645762,
+      "marketCap": 645762,
+      "socials": [
+        {
+          "url": "https://x.com/i/communities/2008772025196679563",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/robinhoodpons",
+          "type": "telegram"
+        }
+      ],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x3dd785f682c6e6fc5b478f31b4c6155eaad01644db860cc8d5f8147db0022c9e": {
+      "pairAddress": "0x3dd785f682c6e6fc5b478f31b4c6155eaad01644db860cc8d5f8147db0022c9e",
+      "baseToken": {
+        "address": "0x79fe86b963255ce884bdcac6388c50a599ba277f",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783573126000,
+      "priceUsd": 0.0003494,
+      "priceNative": "0.0000001808",
+      "tvlUsd": 4865.07,
+      "volume24h": 11479.01,
+      "swaps24h": 317,
+      "buys24h": 175,
+      "sells24h": 142,
+      "priceChange24h": -21.57,
+      "fdv": 317151,
+      "marketCap": 317151,
+      "socials": [
+        {
+          "url": "https://x.com/robinhood_meme_",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/robin_hood_meme",
+          "type": "telegram"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://www.rhcat.fun/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x8a3a4a330c18c8544f1680cd347159ad5d68b5ada60c5a9016eeeb59e3b319f6": {
+      "pairAddress": "0x8a3a4a330c18c8544f1680cd347159ad5d68b5ada60c5a9016eeeb59e3b319f6",
+      "baseToken": {
+        "address": "0x79fe86b963255ce884bdcac6388c50a599ba277f",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783552329000,
+      "priceUsd": 0.001946,
+      "priceNative": "0.000001034",
+      "tvlUsd": 2325.37,
+      "volume24h": 0,
+      "swaps24h": 1,
+      "buys24h": 0,
+      "sells24h": 1,
+      "priceChange24h": null,
+      "fdv": 1766995,
+      "marketCap": 1766995,
+      "socials": [
+        {
+          "url": "https://x.com/robinhood_meme_",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/robin_hood_meme",
+          "type": "telegram"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://www.rhcat.fun/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x9c62801926a18f6e3e566a5c20c2fe0923c6680ef98dd40c8c53f4ef12d2a421": {
+      "pairAddress": "0x9c62801926a18f6e3e566a5c20c2fe0923c6680ef98dd40c8c53f4ef12d2a421",
+      "baseToken": {
+        "address": "0x69424271a43ed5b2f432ae8899532c1e08a25cf7",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783979117000,
+      "priceUsd": 0.00000256,
+      "priceNative": "0.000000001329",
+      "tvlUsd": 2519.22,
+      "volume24h": 3253.7,
+      "swaps24h": 74,
+      "buys24h": 15,
+      "sells24h": 59,
+      "priceChange24h": -70.33,
+      "fdv": 2561,
+      "marketCap": 2561,
+      "socials": [
+        {
+          "url": "https://x.com/vladtenev/status/1382390320663560197?s=20",
+          "type": "twitter"
+        }
+      ],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x414053adb16c0fa4dc3d8d29642fc562cb7957db": {
+      "pairAddress": "0x414053adb16c0fa4dc3d8d29642fc562cb7957db",
+      "baseToken": {
+        "address": "0x5f6cd1cb5c90d733f0e1b540044230225a96836d",
+        "name": "ROBINHOOD",
+        "symbol": "HOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v2",
+      "labels": [
+        "v2"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783019351000,
+      "priceUsd": 0.00008672,
+      "priceNative": "0.00000004509",
+      "tvlUsd": 23188.3,
+      "volume24h": 79.34,
+      "swaps24h": 9,
+      "buys24h": 4,
+      "sells24h": 5,
+      "priceChange24h": 1.14,
+      "fdv": 86724,
+      "marketCap": 86724,
+      "socials": [
+        {
+          "url": "https://x.com/hoodonrobinhood",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/hoodonrobinhoood",
+          "type": "telegram"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://www.hoodonhoodchain.io/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0xd05643d55b6199ab3abaa50df86f2b5f4c3e6c39fb884bbfa31e08aa516ea834": {
+      "pairAddress": "0xd05643d55b6199ab3abaa50df86f2b5f4c3e6c39fb884bbfa31e08aa516ea834",
+      "baseToken": {
+        "address": "0x217b7013e00c13ce4f3bc968238e0b13ce297382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784135140000,
+      "priceUsd": 0.000002648,
+      "priceNative": "0.000000001379",
+      "tvlUsd": 38011.49,
+      "volume24h": 85817.09,
+      "swaps24h": 337,
+      "buys24h": 187,
+      "sells24h": 150,
+      "priceChange24h": 851,
+      "fdv": 60449,
+      "marketCap": 60449,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x37d1d917387bf4828267c2aae45473d6a3b501d1a59852a9ceb04d44efa0811a": {
+      "pairAddress": "0x37d1d917387bf4828267c2aae45473d6a3b501d1a59852a9ceb04d44efa0811a",
+      "baseToken": {
+        "address": "0x7bb6f4c511aac18270a1e50ba322cb47634b7382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784122957000,
+      "priceUsd": 0.0002568,
+      "priceNative": "0.0000001336",
+      "tvlUsd": 37960.96,
+      "volume24h": 141661.69,
+      "swaps24h": 479,
+      "buys24h": 253,
+      "sells24h": 226,
+      "priceChange24h": 876,
+      "fdv": 58624,
+      "marketCap": 58624,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x1166aff324c18f1387568b010eb8d2b4046617b64b005017a0d6e8d397552ac8": {
+      "pairAddress": "0x1166aff324c18f1387568b010eb8d2b4046617b64b005017a0d6e8d397552ac8",
+      "baseToken": {
+        "address": "0x870a6b765c4f25b309e459cbc84601f47db27382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784131349000,
+      "priceUsd": 0.000002567,
+      "priceNative": "0.000000001336",
+      "tvlUsd": 37516.81,
+      "volume24h": 99755.34,
+      "swaps24h": 356,
+      "buys24h": 195,
+      "sells24h": 161,
+      "priceChange24h": 824,
+      "fdv": 58604,
+      "marketCap": 58604,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x500fa386b7828a6e908b024328b4693e149798569d413242677cfa968d7f8a57": {
+      "pairAddress": "0x500fa386b7828a6e908b024328b4693e149798569d413242677cfa968d7f8a57",
+      "baseToken": {
+        "address": "0x181158546dfe87827a1ac3d87d64a442e9e87382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784120258000,
+      "priceUsd": 0.0002154,
+      "priceNative": "0.0000001113",
+      "tvlUsd": 34741.81,
+      "volume24h": 135098.35,
+      "swaps24h": 485,
+      "buys24h": 258,
+      "sells24h": 227,
+      "priceChange24h": 722,
+      "fdv": 49163,
+      "marketCap": 49163,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0xcc1eba6e71d65ef3dfe7d7b58f503cf62e81f37ccabce16c8170375191e52b7b": {
+      "pairAddress": "0xcc1eba6e71d65ef3dfe7d7b58f503cf62e81f37ccabce16c8170375191e52b7b",
+      "baseToken": {
+        "address": "0xb410d2149ed586bef48c5cf9f00d1c7953577382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784130072000,
+      "priceUsd": 0.000002396,
+      "priceNative": "0.000000001239",
+      "tvlUsd": 36092.65,
+      "volume24h": 77266.78,
+      "swaps24h": 313,
+      "buys24h": 172,
+      "sells24h": 141,
+      "priceChange24h": 748,
+      "fdv": 54685,
+      "marketCap": 54685,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0xc1301e3363ef8b10ad03533dc614eb3bb5975fcabdb6d037890c6359bd056091": {
+      "pairAddress": "0xc1301e3363ef8b10ad03533dc614eb3bb5975fcabdb6d037890c6359bd056091",
+      "baseToken": {
+        "address": "0xa1a1b0bbe166355623cd4828a671f88249cc7382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784120932000,
+      "priceUsd": 0.0002077,
+      "priceNative": "0.0000001070",
+      "tvlUsd": 34473.66,
+      "volume24h": 143265.82,
+      "swaps24h": 465,
+      "buys24h": 248,
+      "sells24h": 217,
+      "priceChange24h": 689,
+      "fdv": 47419,
+      "marketCap": 47419,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x1b3b7c244eb56fafd2f3052ecc1d609f27cc10e872796335d9682bfd6b4184ba": {
+      "pairAddress": "0x1b3b7c244eb56fafd2f3052ecc1d609f27cc10e872796335d9682bfd6b4184ba",
+      "baseToken": {
+        "address": "0xdc59bd5f86658a9ed275dbb4f0664fa033ce7382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784136482000,
+      "priceUsd": 0.00004769,
+      "priceNative": "0.00000002479",
+      "tvlUsd": 34056.69,
+      "volume24h": 63860.06,
+      "swaps24h": 363,
+      "buys24h": 198,
+      "sells24h": 165,
+      "priceChange24h": 727,
+      "fdv": 47690,
+      "marketCap": 47690,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x14bc516bccafb21849e842fae44831c2e49b24939054cbbbc855fb96ce9eddfe": {
+      "pairAddress": "0x14bc516bccafb21849e842fae44831c2e49b24939054cbbbc855fb96ce9eddfe",
+      "baseToken": {
+        "address": "0xf0184614e0ab8a38242096c9a30a6a5e773c7382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784121920000,
+      "priceUsd": 0.0002192,
+      "priceNative": "0.0000001131",
+      "tvlUsd": 34719.68,
+      "volume24h": 67097.07,
+      "swaps24h": 263,
+      "buys24h": 144,
+      "sells24h": 119,
+      "priceChange24h": 730,
+      "fdv": 50028,
+      "marketCap": 50028,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x00a60c37f78c73e36380634c5dd3f16c0635db5c3465307f15c8ff907fa959d5": {
+      "pairAddress": "0x00a60c37f78c73e36380634c5dd3f16c0635db5c3465307f15c8ff907fa959d5",
+      "baseToken": {
+        "address": "0xa23ec3db477e937de8fee8ce4160303ad57d7382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784130622000,
+      "priceUsd": 0.000002299,
+      "priceNative": "0.000000001190",
+      "tvlUsd": 35546.08,
+      "volume24h": 99561.75,
+      "swaps24h": 352,
+      "buys24h": 191,
+      "sells24h": 161,
+      "priceChange24h": 595,
+      "fdv": 52468,
+      "marketCap": 52468,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x6e68fbdcd67784a9fdcd946b0ebae0edce8501d94d6d05e0af6d62ee2e534def": {
+      "pairAddress": "0x6e68fbdcd67784a9fdcd946b0ebae0edce8501d94d6d05e0af6d62ee2e534def",
+      "baseToken": {
+        "address": "0xeb4973853c4a49d4615606c5b26098e8d3767382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784122293000,
+      "priceUsd": 0.0001966,
+      "priceNative": "0.0000001017",
+      "tvlUsd": 33296.4,
+      "volume24h": 145851.47,
+      "swaps24h": 485,
+      "buys24h": 257,
+      "sells24h": 228,
+      "priceChange24h": 646,
+      "fdv": 44872,
+      "marketCap": 44872,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x994b347d4d984c3b4772bd65b351fe875c3140194fa34471e4ce4ac9f5e8fb8d": {
+      "pairAddress": "0x994b347d4d984c3b4772bd65b351fe875c3140194fa34471e4ce4ac9f5e8fb8d",
+      "baseToken": {
+        "address": "0x5afa96e786caf06fc7b93d7f5cdde1e9c93e2c2d",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784119579000,
+      "priceUsd": 0.00003842,
+      "priceNative": "0.00000001997",
+      "tvlUsd": 30646.43,
+      "volume24h": 59283.98,
+      "swaps24h": 459,
+      "buys24h": 247,
+      "sells24h": 212,
+      "priceChange24h": 577,
+      "fdv": 38424,
+      "marketCap": 38424,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x9104e71a777369a83eb532f3a2e02447026abf0c141dc8c4e662377c53027950": {
+      "pairAddress": "0x9104e71a777369a83eb532f3a2e02447026abf0c141dc8c4e662377c53027950",
+      "baseToken": {
+        "address": "0xb09726d190a89468f9ed105fe34e123bba47f351",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784118839000,
+      "priceUsd": 0.0000384,
+      "priceNative": "0.00000002026",
+      "tvlUsd": 30455.94,
+      "volume24h": 64332.63,
+      "swaps24h": 436,
+      "buys24h": 236,
+      "sells24h": 200,
+      "priceChange24h": 577,
+      "fdv": 38410,
+      "marketCap": 38410,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x472544078ca2bdf6addb0f75407b98e73da29094bb237a573946ae7f2cb95661": {
+      "pairAddress": "0x472544078ca2bdf6addb0f75407b98e73da29094bb237a573946ae7f2cb95661",
+      "baseToken": {
+        "address": "0x653ac2ed904eca101a859fbadd8f50b1541d7382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784121571000,
+      "priceUsd": 0.0001335,
+      "priceNative": "0.00000006884",
+      "tvlUsd": 26729.52,
+      "volume24h": 32674.04,
+      "swaps24h": 161,
+      "buys24h": 88,
+      "sells24h": 73,
+      "priceChange24h": 406,
+      "fdv": 30474,
+      "marketCap": 30474,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x06e4a086a4f1e0cb6dc4f180f3749608ffb8926d2cef9344be779984a1bfe37f": {
+      "pairAddress": "0x06e4a086a4f1e0cb6dc4f180f3749608ffb8926d2cef9344be779984a1bfe37f",
+      "baseToken": {
+        "address": "0xdc8bb7ee7a7525f85ed4efeef8a09927f0a426b6",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784123678000,
+      "priceUsd": 0.00002685,
+      "priceNative": "0.00000001395",
+      "tvlUsd": 25362.51,
+      "volume24h": 30536.51,
+      "swaps24h": 238,
+      "buys24h": 128,
+      "sells24h": 110,
+      "priceChange24h": 366,
+      "fdv": 26859,
+      "marketCap": 26859,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x9be36d34b2bc0ab3b6581666b3228668992720924aa62b3fd3e9dccf5d55f791": {
+      "pairAddress": "0x9be36d34b2bc0ab3b6581666b3228668992720924aa62b3fd3e9dccf5d55f791",
+      "baseToken": {
+        "address": "0x3d15748c0e5a6eeb2482c4e9de1d94547e937382",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784121803000,
+      "priceUsd": 0.0001036,
+      "priceNative": "0.00000005342",
+      "tvlUsd": 23530.97,
+      "volume24h": 9929.6,
+      "swaps24h": 71,
+      "buys24h": 40,
+      "sells24h": 31,
+      "priceChange24h": 293,
+      "fdv": 23648,
+      "marketCap": 23648,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x853d7c2ac6925da24a512daa9fb198dcbe09116c": {
+      "pairAddress": "0x853d7c2ac6925da24a512daa9fb198dcbe09116c",
+      "baseToken": {
+        "address": "0x4fa8a38b6f2e9d3b263974823c482633109dc96f",
+        "name": "Robinhood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1782907141000,
+      "priceUsd": 0.000004948,
+      "priceNative": "0.000000002567",
+      "tvlUsd": 4578.73,
+      "volume24h": 95.89,
+      "swaps24h": 6,
+      "buys24h": 1,
+      "sells24h": 5,
+      "priceChange24h": 0.19,
+      "fdv": 4623,
+      "marketCap": 4623,
+      "socials": [
+        {
+          "url": "https://x.com/haych_que/status/2074731452995190939",
+          "type": "twitter"
+        }
+      ],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x6fd413961f66653c9cbe4766910f6ab1b8a4e27c": {
+      "pairAddress": "0x6fd413961f66653c9cbe4766910f6ab1b8a4e27c",
+      "baseToken": {
+        "address": "0x515b609c64125431ac6d47efc73b69f7257e75e2",
+        "name": "Robin Hood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783671929000,
+      "priceUsd": 0.00000423,
+      "priceNative": "0.000000002206",
+      "tvlUsd": 4049.13,
+      "volume24h": 1859.79,
+      "swaps24h": 32,
+      "buys24h": 11,
+      "sells24h": 21,
+      "priceChange24h": -9.21,
+      "fdv": 3921,
+      "marketCap": 3921,
+      "socials": [
+        {
+          "url": "https://x.com/i/communities/2027595995341586576",
+          "type": "twitter"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://web.archive.org/web/20171020135945im_/https://d2ue93q3u507c2.cloudfront.net/assets/marketing/images/og/robinhood.jpg",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x285b90b08b5a64672862ae40178845bf565e8040": {
+      "pairAddress": "0x285b90b08b5a64672862ae40178845bf565e8040",
+      "baseToken": {
+        "address": "0x44dfdb5a4519bae979ae267b6527671cced31c54",
+        "name": "Robin Hood",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783707704000,
+      "priceUsd": 0.000003319,
+      "priceNative": "0.000000001715",
+      "tvlUsd": 3278.71,
+      "volume24h": 36.37,
+      "swaps24h": 2,
+      "buys24h": 0,
+      "sells24h": 2,
+      "priceChange24h": 2.77,
+      "fdv": 3129,
+      "marketCap": 3129,
+      "socials": [
+        {
+          "url": "https://x.com/AppStore/status/608068130817118208",
+          "type": "twitter"
+        }
+      ],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0xb6f11fffdf4035c69998e003c87018b1af751050": {
+      "pairAddress": "0xb6f11fffdf4035c69998e003c87018b1af751050",
+      "baseToken": {
+        "address": "0xee2d4dc069cc6746d293b48a66240354a6fa0cd5",
+        "name": "ROBINHOOD",
+        "symbol": "ROBINHOOD"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783654272000,
+      "priceUsd": 0.000002751,
+      "priceNative": "0.000000001473",
+      "tvlUsd": 2750.9,
+      "volume24h": 211.47,
+      "swaps24h": 4,
+      "buys24h": 0,
+      "sells24h": 4,
+      "priceChange24h": -10.83,
+      "fdv": 2671,
+      "marketCap": 2671,
+      "socials": [
+        {
+          "url": "https://x.com/Somnicko/status/2075422515799920844",
+          "type": "twitter"
+        },
+        {
+          "url": "https://www.instagram.com/p/BneCjnoButy/",
+          "type": "instagram"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://www.facebook.com/reel/236743970330030",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0x320f9602ba292c429a0ff89d1de351f1ac7cefbc": {
+      "pairAddress": "0x320f9602ba292c429a0ff89d1de351f1ac7cefbc",
+      "baseToken": {
+        "address": "0x5de3315a134e2bce0a3beb82f284c539955f355b",
+        "name": "Robinhood",
+        "symbol": "Robinhood"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783899489000,
+      "priceUsd": 0.000002778,
+      "priceNative": "0.000000001479",
+      "tvlUsd": 2773.09,
+      "volume24h": 113.31,
+      "swaps24h": 3,
+      "buys24h": 1,
+      "sells24h": 2,
+      "priceChange24h": -4.36,
+      "fdv": 2778,
+      "marketCap": 2778,
+      "socials": [
+        {
+          "url": "https://x.com/0x_dddT/status/2076451051293569357",
+          "type": "twitter"
+        }
+      ],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069283,
+      "lastUpdated": 1784141069283
+    },
+    "0xa70fc67c9f69da90b63a0e4c05d229954574e313": {
+      "pairAddress": "0xa70fc67c9f69da90b63a0e4c05d229954574e313",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1781812885000,
+      "priceUsd": 0.1022,
+      "priceNative": "0.00005297",
+      "tvlUsd": 7342112.33,
+      "volume24h": 34707598.26,
+      "swaps24h": 26431,
+      "buys24h": 16449,
+      "sells24h": 9982,
+      "priceChange24h": -40.43,
+      "fdv": 101326353,
+      "marketCap": 101326353,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0xd42a491087a15e5afd51feb3606066cc152d2b09": {
+      "pairAddress": "0xd42a491087a15e5afd51feb3606066cc152d2b09",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1782934722000,
+      "priceUsd": 0.1022,
+      "priceNative": "0.00005301",
+      "tvlUsd": 1181686.62,
+      "volume24h": 26599049.03,
+      "swaps24h": 42391,
+      "buys24h": 25785,
+      "sells24h": 16606,
+      "priceChange24h": -40.34,
+      "fdv": 101411111,
+      "marketCap": 101411111,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0xfd7345727e1fd9333a9790c71a2dcec0c12f9dec": {
+      "pairAddress": "0xfd7345727e1fd9333a9790c71a2dcec0c12f9dec",
+      "baseToken": {
+        "address": "0xab51fa34f57dcb1046841125d40ff3b6aa260dfc",
+        "name": "Cash Cat by Dev",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784055555000,
+      "priceUsd": 0.00001397,
+      "priceNative": "0.000000007244",
+      "tvlUsd": 14059.13,
+      "volume24h": 1482244.04,
+      "swaps24h": 7850,
+      "buys24h": 4322,
+      "sells24h": 3528,
+      "priceChange24h": 6.07,
+      "fdv": 13974,
+      "marketCap": 13974,
+      "socials": [
+        {
+          "url": "https://x.com/cashcatbydev",
+          "type": "twitter"
+        }
+      ],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0xa92a3df27a00a276183ff7265fd8affa11df1fe8bb23ddfaf13f6c879a3f818b": {
+      "pairAddress": "0xa92a3df27a00a276183ff7265fd8affa11df1fe8bb23ddfaf13f6c879a3f818b",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+        "name": "Global Dollar",
+        "symbol": "USDG"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784122755000,
+      "priceUsd": 0.1025,
+      "priceNative": "0.1023",
+      "tvlUsd": 892939.87,
+      "volume24h": 4476914.34,
+      "swaps24h": 8597,
+      "buys24h": 4750,
+      "sells24h": 3847,
+      "priceChange24h": -23.42,
+      "fdv": 101706543,
+      "marketCap": 101706543,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0xee0d95c4644e0847eca78d5f5333abe1ab798b159fdd01712327258a755d4423": {
+      "pairAddress": "0xee0d95c4644e0847eca78d5f5333abe1ab798b159fdd01712327258a755d4423",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+        "name": "Global Dollar",
+        "symbol": "USDG"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783526658000,
+      "priceUsd": 0.1025,
+      "priceNative": "0.1022",
+      "tvlUsd": 516648.77,
+      "volume24h": 6877164.66,
+      "swaps24h": 11224,
+      "buys24h": 6369,
+      "sells24h": 4855,
+      "priceChange24h": -40.15,
+      "fdv": 101653322,
+      "marketCap": 101653322,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0xfb4f9cf463af813633e533f7e81cfb95cea80422495d02ac3552d92ed2786e88": {
+      "pairAddress": "0xfb4f9cf463af813633e533f7e81cfb95cea80422495d02ac3552d92ed2786e88",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783874513000,
+      "priceUsd": 0.1026,
+      "priceNative": "0.00005317",
+      "tvlUsd": 105884.49,
+      "volume24h": 2206629.03,
+      "swaps24h": 16163,
+      "buys24h": 8577,
+      "sells24h": 7586,
+      "priceChange24h": -40.09,
+      "fdv": 101720020,
+      "marketCap": 101720020,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x6c80f51b59b00f1e72a06c3a381739e09e528ed5": {
+      "pairAddress": "0x6c80f51b59b00f1e72a06c3a381739e09e528ed5",
+      "baseToken": {
+        "address": "0x71d6a215344b61f36514214d9cbace82643f066d",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783993392000,
+      "priceUsd": 0.00009309,
+      "priceNative": "0.00000004824",
+      "tvlUsd": 29344.45,
+      "volume24h": 579236.33,
+      "swaps24h": 3153,
+      "buys24h": 1788,
+      "sells24h": 1365,
+      "priceChange24h": 495,
+      "fdv": 84646,
+      "marketCap": 84646,
+      "socials": [
+        {
+          "url": "https://x.com/CashCatPons",
+          "type": "twitter"
+        }
+      ],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x7dfc6415af7b5b5fda7939c37696ea69d6c56989bc1d2f49ab66cda1f97ad7e1": {
+      "pairAddress": "0x7dfc6415af7b5b5fda7939c37696ea69d6c56989bc1d2f49ab66cda1f97ad7e1",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783627564000,
+      "priceUsd": 0.1025,
+      "priceNative": "0.00005313",
+      "tvlUsd": 248073.36,
+      "volume24h": 2238057.93,
+      "swaps24h": 6730,
+      "buys24h": 3710,
+      "sells24h": 3020,
+      "priceChange24h": -40.14,
+      "fdv": 101638816,
+      "marketCap": 101638816,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0xf7dc0af99fce7169eb76854c0b39beb9915526894d42229946e5cb469cab50b1": {
+      "pairAddress": "0xf7dc0af99fce7169eb76854c0b39beb9915526894d42229946e5cb469cab50b1",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1782971898000,
+      "priceUsd": 0.1021,
+      "priceNative": "0.00005291",
+      "tvlUsd": 616628.05,
+      "volume24h": 1153430.52,
+      "swaps24h": 2187,
+      "buys24h": 1140,
+      "sells24h": 1047,
+      "priceChange24h": -40.65,
+      "fdv": 101224939,
+      "marketCap": 101224939,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x81e1cda9b2dd4c98becb9f97214c2936f7a44d8763eb2bc3949c93674061c3e6": {
+      "pairAddress": "0x81e1cda9b2dd4c98becb9f97214c2936f7a44d8763eb2bc3949c93674061c3e6",
+      "baseToken": {
+        "address": "0x1ac4d6c0dc5733a31d32955d32e5b8d0d417c5c9",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784044785000,
+      "priceUsd": 0.00003497,
+      "priceNative": "0.00000001812",
+      "tvlUsd": 15153.92,
+      "volume24h": 10268.86,
+      "swaps24h": 206,
+      "buys24h": 113,
+      "sells24h": 93,
+      "priceChange24h": 7.26,
+      "fdv": 34972,
+      "marketCap": 34972,
+      "socials": [
+        {
+          "url": "https://x.com/Supermanonchain/status/2077060301376360960",
+          "type": "twitter"
+        }
+      ],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x06a136ff9199da1a43b5a5d163a00de4c760fd8e5d333b491d7fd9d6ac489773": {
+      "pairAddress": "0x06a136ff9199da1a43b5a5d163a00de4c760fd8e5d333b491d7fd9d6ac489773",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1782933571000,
+      "priceUsd": 0.1038,
+      "priceNative": "0.00005376",
+      "tvlUsd": 67909.64,
+      "volume24h": 8849.48,
+      "swaps24h": 501,
+      "buys24h": 225,
+      "sells24h": 276,
+      "priceChange24h": -39.45,
+      "fdv": 102974137,
+      "marketCap": 102974137,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x414582fb651d8629238ca87b85e93509d27a1e3610ff65c050ada959f4459fe9": {
+      "pairAddress": "0x414582fb651d8629238ca87b85e93509d27a1e3610ff65c050ada959f4459fe9",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+        "name": "Global Dollar",
+        "symbol": "USDG"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783925733000,
+      "priceUsd": 0.1021,
+      "priceNative": "0.1018",
+      "tvlUsd": 16908.2,
+      "volume24h": 168290.91,
+      "swaps24h": 4498,
+      "buys24h": 2288,
+      "sells24h": 2210,
+      "priceChange24h": -40.42,
+      "fdv": 101225580,
+      "marketCap": 101225580,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x74739c7ee5dda3695d01575c32371eff16e7b831e37517d1a99b568749143e7a": {
+      "pairAddress": "0x74739c7ee5dda3695d01575c32371eff16e7b831e37517d1a99b568749143e7a",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1782934679000,
+      "priceUsd": 0.1023,
+      "priceNative": "0.00005306",
+      "tvlUsd": 21314.89,
+      "volume24h": 124865.36,
+      "swaps24h": 4552,
+      "buys24h": 2483,
+      "sells24h": 2069,
+      "priceChange24h": -40.11,
+      "fdv": 101509909,
+      "marketCap": 101509909,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x5501f1e70a9a3c56f57880c18d095a63f4e1b50e9def646e7f3c6633d49db550": {
+      "pairAddress": "0x5501f1e70a9a3c56f57880c18d095a63f4e1b50e9def646e7f3c6633d49db550",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1782933469000,
+      "priceUsd": 0.1055,
+      "priceNative": "0.00005461",
+      "tvlUsd": 46176.74,
+      "volume24h": 1321.32,
+      "swaps24h": 172,
+      "buys24h": 53,
+      "sells24h": 119,
+      "priceChange24h": -36.9,
+      "fdv": 104604320,
+      "marketCap": 104604320,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0xc37120cc36a2c63af25448d5503fe4b8ff8bd5d7a91a99912aafa1c6a90fa6f9": {
+      "pairAddress": "0xc37120cc36a2c63af25448d5503fe4b8ff8bd5d7a91a99912aafa1c6a90fa6f9",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+        "name": "Global Dollar",
+        "symbol": "USDG"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783491284000,
+      "priceUsd": 0.1028,
+      "priceNative": "0.1025",
+      "tvlUsd": 17482.27,
+      "volume24h": 16765.44,
+      "swaps24h": 1190,
+      "buys24h": 597,
+      "sells24h": 593,
+      "priceChange24h": -40.16,
+      "fdv": 101973239,
+      "marketCap": 101973239,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x76d4df1e097e3ed9e73a6a14ea5c574a96297b63e375dc8bb6877b6ff447bf43": {
+      "pairAddress": "0x76d4df1e097e3ed9e73a6a14ea5c574a96297b63e375dc8bb6877b6ff447bf43",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783521230000,
+      "priceUsd": 0.1026,
+      "priceNative": "0.00005314",
+      "tvlUsd": 29401.9,
+      "volume24h": 98.9,
+      "swaps24h": 222,
+      "buys24h": 100,
+      "sells24h": 122,
+      "priceChange24h": -40,
+      "fdv": 101801944,
+      "marketCap": 101801944,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x23a983bb3d0711aae0a5614dd37e9dc9086a44e838c9a331fb9e787bca18dace": {
+      "pairAddress": "0x23a983bb3d0711aae0a5614dd37e9dc9086a44e838c9a331fb9e787bca18dace",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783481763000,
+      "priceUsd": 0.1023,
+      "priceNative": "0.00005299",
+      "tvlUsd": 7429.49,
+      "volume24h": 14445.89,
+      "swaps24h": 933,
+      "buys24h": 468,
+      "sells24h": 465,
+      "priceChange24h": -40.1,
+      "fdv": 101498634,
+      "marketCap": 101498634,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0xf3b084ea34032580a5aa27f1f97045bdd133a446850452e5292dddb55cb13913": {
+      "pairAddress": "0xf3b084ea34032580a5aa27f1f97045bdd133a446850452e5292dddb55cb13913",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "name": "Ether",
+        "symbol": "ETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1782933008000,
+      "priceUsd": 0.1185,
+      "priceNative": "0.00006188",
+      "tvlUsd": 2281.18,
+      "volume24h": 3.72,
+      "swaps24h": 8,
+      "buys24h": 0,
+      "sells24h": 8,
+      "priceChange24h": -26.67,
+      "fdv": 117517376,
+      "marketCap": 117517376,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x3fe333b07c46efde38cc54a7503dd57b8908b9b6": {
+      "pairAddress": "0x3fe333b07c46efde38cc54a7503dd57b8908b9b6",
+      "baseToken": {
+        "address": "0xa8a7ba87bdd4952c6f970f0f589a42869897ab8b",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1784119175000,
+      "priceUsd": 0.0001919,
+      "priceNative": "0.0000001000",
+      "tvlUsd": 143926.33,
+      "volume24h": 1.91,
+      "swaps24h": 4,
+      "buys24h": 1,
+      "sells24h": 3,
+      "priceChange24h": 1.43,
+      "fdv": 191902,
+      "marketCap": 191902,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0xa009b0de37eb27bfcc5fcaac77bdbc2b998b3e27": {
+      "pairAddress": "0xa009b0de37eb27bfcc5fcaac77bdbc2b998b3e27",
+      "baseToken": {
+        "address": "0x8da63fa55a11cf9fbac3c050d01aaab3a8cc6154",
+        "name": "CASH CAT",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v3",
+      "labels": [
+        "v3"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1783579179000,
+      "priceUsd": 0.0004053,
+      "priceNative": "0.0000002099",
+      "tvlUsd": 364794.26,
+      "volume24h": 0,
+      "swaps24h": 1,
+      "buys24h": 0,
+      "sells24h": 1,
+      "priceChange24h": null,
+      "fdv": 405327,
+      "marketCap": 405327,
+      "socials": [],
+      "websites": [],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x358a1752a423bfe1c35cd24b39016a26e4eca0ea": {
+      "pairAddress": "0x358a1752a423bfe1c35cd24b39016a26e4eca0ea",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "?",
+      "labels": [],
+      "dex": "0x002EC9782d70f4e79396c58964D4691cA648FB49",
+      "pairCreatedAt": 1784119431000,
+      "priceUsd": 0.1012,
+      "priceNative": "0.00005242",
+      "tvlUsd": 685.23,
+      "volume24h": 208.95,
+      "swaps24h": 62,
+      "buys24h": 25,
+      "sells24h": 37,
+      "priceChange24h": -20.72,
+      "fdv": 100338894,
+      "marketCap": 100338894,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x1b619a121d6c5bfd10d149e7246da3c838a66b48": {
+      "pairAddress": "0x1b619a121d6c5bfd10d149e7246da3c838a66b48",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "?",
+      "labels": [],
+      "dex": "up",
+      "priceUsd": 0.1027,
+      "priceNative": "0.00005324",
+      "tvlUsd": 6713.17,
+      "volume24h": 93858.19,
+      "swaps24h": 2699,
+      "buys24h": 1394,
+      "sells24h": 1305,
+      "priceChange24h": -39.39,
+      "fdv": 101859329,
+      "marketCap": 101859329,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x13f501cbfd47a07ccee7e9ef4134bb0e770d138f": {
+      "pairAddress": "0x13f501cbfd47a07ccee7e9ef4134bb0e770d138f",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v4",
+      "labels": [
+        "v4"
+      ],
+      "dex": "sheriff",
+      "priceUsd": 0.1023,
+      "priceNative": "0.00005304",
+      "tvlUsd": 3475.46,
+      "volume24h": 21175.79,
+      "swaps24h": 847,
+      "buys24h": 421,
+      "sells24h": 426,
+      "priceChange24h": -39.98,
+      "fdv": 101469381,
+      "marketCap": 101469381,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x5da1aa1ad4a357c9d1ed4f78f8b0503c5b9d02e8": {
+      "pairAddress": "0x5da1aa1ad4a357c9d1ed4f78f8b0503c5b9d02e8",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "?",
+      "labels": [],
+      "dex": "0x2f171c6997FC98970efc0Ff3E3AEB6ef4025E939",
+      "pairCreatedAt": 1784022210000,
+      "priceUsd": 0.1018,
+      "priceNative": "0.00005274",
+      "tvlUsd": 1370.23,
+      "volume24h": 1026.31,
+      "swaps24h": 212,
+      "buys24h": 92,
+      "sells24h": 120,
+      "priceChange24h": -40.59,
+      "fdv": 100949840,
+      "marketCap": 100949840,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x4e8649be40ae67ebbcff99c291b92ee03015917b": {
+      "pairAddress": "0x4e8649be40ae67ebbcff99c291b92ee03015917b",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "?",
+      "labels": [],
+      "dex": "up",
+      "priceUsd": 0.1025,
+      "priceNative": "0.00005308",
+      "tvlUsd": 146.88,
+      "volume24h": 973.24,
+      "swaps24h": 222,
+      "buys24h": 99,
+      "sells24h": 123,
+      "priceChange24h": -35.65,
+      "fdv": 101677911,
+      "marketCap": 101677911,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x1e4238e85b8c76c3a81d8e65544367ebb9a61b78": {
+      "pairAddress": "0x1e4238e85b8c76c3a81d8e65544367ebb9a61b78",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "?",
+      "labels": [],
+      "dex": "0xEa561E058313B96011e5070Ca7d0f027A44E3748",
+      "pairCreatedAt": 1783886666000,
+      "priceUsd": 0.1022,
+      "priceNative": "0.00005293",
+      "tvlUsd": 96.37,
+      "volume24h": 67.9,
+      "swaps24h": 48,
+      "buys24h": 18,
+      "sells24h": 30,
+      "priceChange24h": -38.34,
+      "fdv": 101397894,
+      "marketCap": 101397894,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x0579fa41416101b66e202f66bf3b0de5101f5b9f": {
+      "pairAddress": "0x0579fa41416101b66e202f66bf3b0de5101f5b9f",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "v2",
+      "labels": [
+        "v2"
+      ],
+      "dex": "uniswap",
+      "pairCreatedAt": 1782936115000,
+      "priceUsd": 0.1053,
+      "priceNative": "0.00005457",
+      "tvlUsd": 37.43,
+      "volume24h": 367.38,
+      "swaps24h": 97,
+      "buys24h": 45,
+      "sells24h": 52,
+      "priceChange24h": -30.93,
+      "fdv": 104478655,
+      "marketCap": 104478655,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    },
+    "0x3dc6b6c354fb1e9cfdaa8a36ff845728f7176f4e": {
+      "pairAddress": "0x3dc6b6c354fb1e9cfdaa8a36ff845728f7176f4e",
+      "baseToken": {
+        "address": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+        "name": "Cash Cat",
+        "symbol": "CASHCAT"
+      },
+      "quoteToken": {
+        "address": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        "name": "WETH",
+        "symbol": "WETH"
+      },
+      "version": "?",
+      "labels": [],
+      "dex": "aeon-protocol",
+      "priceUsd": 0.1021,
+      "priceNative": "0.00005290",
+      "tvlUsd": 182.04,
+      "volume24h": 128.89,
+      "swaps24h": 48,
+      "buys24h": 17,
+      "sells24h": 31,
+      "priceChange24h": -39.02,
+      "fdv": 101260806,
+      "marketCap": 101260806,
+      "socials": [
+        {
+          "url": "https://x.com/cashcat_token",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/cashcat_robinhood",
+          "type": "telegram"
+        },
+        {
+          "url": "https://www.reddit.com/r/cashcattoken/s/L8GOOuy9Ch",
+          "type": "reddit"
+        }
+      ],
+      "websites": [
+        {
+          "url": "https://cashcattoken.xyz/",
+          "label": "Website"
+        }
+      ],
+      "gmgnFlags": null,
+      "gmgnChecked": false,
+      "score": 0,
+      "scoreBreakdown": {},
+      "notified": false,
+      "discoveredAt": 1784141069650,
+      "lastUpdated": 1784141069650
+    }
+  },
+  "lastDiscovery": 0,
+  "lastFetch": 0
+}
