@@ -52,6 +52,20 @@
   "circuitBreakerCooldownMin": 30,
   "gasUnits": 700000,
   "eoaFallbackEnabled": false,
+  "--- LP SCREENER ---": "LP pool discovery + ranking via DexScreener + on-chain",
+  "lpScreener": {
+    "pollIntervalMs": 1200000,
+    "discoveryIntervalMin": 180,
+    "summaryIntervalMin": 360,
+    "minTvlUsd": 5000,
+    "minVolume24h": 10000,
+    "minSwaps24h": 50,
+    "minCandidateScore": 40,
+    "gmgnMinScore": 30
+  },
+  "dexScreener": {
+    "searchTerms": ["robinhood", "cashcat", "ROBINHOOD"]
+  },
   "--- LP DEPOSIT/WITHDRAW ---": "All settings for V3+V4 LP positions",
   "lp": {
     "enableV3CashcatWeth": true,
