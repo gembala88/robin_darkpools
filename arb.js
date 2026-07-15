@@ -61,6 +61,17 @@ function recordFail() {
     notifyError(`Circuit breaker active — ${CB.fails} consecutive tx failures. Auto-reset in ${CB.cooldownMin}min.`).catch(() => {});
   }
 }
+const errorThrottle = new Map();
+function throttleError(tokenTag, reason) {
+  const now = Date.now();
+  const key = `${tokenTag}:${(reason||'').slice(0,80)}`;
+  const prev = errorThrottle.get(key);
+  if (prev && now - prev.start < 300000) { prev.count++; return; }
+  const count = prev ? prev.count : 0;
+  errorThrottle.set(key, { start: now, count: 0 });
+  const suffix = count > 0 ? ` (repeated ${count}x in 5min)` : '';
+  notifyError(`${tokenTag}: ${reason}${suffix}`).catch(() => {});
+}
 
 const bpsDown = (x, bps) => x - (x * bps) / 10000n;
 const keyTuple = (k) => [k.currency0, k.currency1, k.fee, k.tickSpacing, k.hooks];
@@ -280,7 +291,6 @@ async function main() {
       if (!CFG.live || !wallet) { console.log('    (idle: dry-run/no wallet)'); return; }
       // Circuit breaker: pause after N consecutive failures
       if (!await checkCircuitBreaker()) { console.log('    (paused — circuit breaker active)'); return; }
-      CB.fails = 0; // reset on any opportunity check (resets after cooldown too)
       // Balance check: skip if executor/wallet can't cover size + gas
       const bcAddr = CFG.executor || wallet.address;
       const bcBal = await provider.getBalance(bcAddr).catch(() => 0n);
@@ -295,9 +305,10 @@ async function main() {
         // hard 120s cap: a hung RPC inside execute() must never leave busy=true
         // and stall the bot past the next window (that missed a live opportunity).
         await Promise.race([execute(b), new Promise((_, rej) => setTimeout(() => rej(new Error('execute timeout 120s')), 120000))]);
+        CB.fails = 0; // reset only after successful execution
       } catch (e) {
         console.log('    exec FAILED:', e.shortMessage || e.message);
-        notifyError(`${b.market.symbol} (${b.market.token.slice(0,8)}…) ${b.tag}: ${e.shortMessage || e.message}`).catch(() => {});
+        throttleError(`${b.market.symbol} (${b.market.token.slice(0,8)}…) ${b.tag}`, e.shortMessage || e.message);
         recordFail();
       } finally {
         busy = false;
