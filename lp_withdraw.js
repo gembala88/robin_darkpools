@@ -21,7 +21,7 @@ function loadState() {
 }
 
 // ===== V3 WITHDRAW =====
-async function withdrawV3(provider, wallet, tokenId, config) {
+export async function withdrawV3(provider, wallet, tokenId, config) {
   console.log(`\\n=== V3 Withdraw tokenId=${tokenId} ===`);
 
   const nfpm = new Contract(V3.nfpm, V3_NFPM_ABI, wallet || provider);
@@ -244,4 +244,9 @@ async function main() {
   if (!wallet) console.log('\nDRY-RUN complete.');
 }
 
-main().catch(e => { console.error('FAILED:', e.shortMessage || e.message); process.exit(1); });
+// Only auto-execute if this is the main module (not imported)
+const isMain = import.meta.url.startsWith('file://') && process.argv[1] &&
+  import.meta.url === new URL(process.argv[1], 'file://').href;
+if (isMain) {
+  main().catch(e => { console.error('FAILED:', e.shortMessage || e.message); process.exit(1); });
+}

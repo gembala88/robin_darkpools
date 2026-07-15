@@ -98,6 +98,7 @@ async function depositV3(provider, wallet, config) {
   const symmetricPct = Number(config.rangeSymmetricPct || 15);
 
   const currentTick = await getV3Tick(provider);
+  const entryTick = currentTick;
   const { tickLower, tickUpper } = computeTickRange(currentTick, symmetricPct, tickSpacing);
 
   const slot0 = await provider.call({ to: LP_V3_CASHCAT_WETH.pool, data: '0x3850c7bd' });
@@ -200,7 +201,7 @@ async function depositV3(provider, wallet, config) {
   console.log(`  Token ID: ${tokenId}`);
 
   const position = { dex: 'V3', pool: LP_V3_CASHCAT_WETH.symbol, tokenId: tokenId?.toString(),
-    tickLower, tickUpper, amount0: amount0Desired.toString(), amount1: amount1Desired.toString(),
+    entryTick, tickLower, tickUpper, amount0: amount0Desired.toString(), amount1: amount1Desired.toString(),
     block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
   const state = loadState();
   state.positions.push(position);
