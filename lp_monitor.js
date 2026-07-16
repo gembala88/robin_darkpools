@@ -152,7 +152,7 @@ async function checkV4(provider, entry, config) {
   if (entry && entry.dex !== 'V4') return null;
   if (!entry?.tokenId) { console.log('  V4 entry tanpa tokenId, skip'); return null; }
 
-  const stateView = new Contract(V4.poolManager, [
+  const stateView = new Contract(V4.stateView, [
     'function getSlot0(bytes32) view returns (uint160, int24, uint24, uint24)',
   ], provider);
   const poolId = computeV4PoolId(LP_V4_CASHCAT_USDG.key);
