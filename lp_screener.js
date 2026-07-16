@@ -586,11 +586,31 @@ const V4_POOLMANAGER_HHI = '0x8366a39cc670b4001a1121b8f6a443a643e40951'.toLowerC
 const MODIFY_LIQ_SIG = topicId('ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)');
 
 async function computeV4HHIPenalty(poolId, poolState) {
-  // DISABLED: V4 HHI causes "network does not support ENS" errors on every getLogs chunk
-  // (23 chunks × 11M blocks per V4 pool). RPC usage is wasteful since extreme-pump guard
-  // already catches high-risk V4 pools (e.g. CLAUDEX). CASHCAT is V3 and uses V3 HHI.
-  // Root cause unclear — raw eth_getLogs via provider.send() should bypass ethers
-  // normalization, but ENS error persists. Re-enable when root cause is found.
+  // DIAGNOSTIC MODE: single-chunk test to capture exact error source
+  // (disabled full scan — 23 chunks × 11M blocks wastes RPC)
+  if (!/^0x[0-9a-fA-F]{64}$/.test(poolId)) return 0;
+  if (poolState.hhiChecked) return (poolState.hhiPenalty || 0);
+  if (poolState.hhiChecking) return 0;
+  poolState.hhiChecking = true;
+
+  try {
+    const provider = await getHHIProvider();
+    const rawFilter = {
+      address: V4_POOLMANAGER_HHI,
+      topics: [MODIFY_LIQ_SIG, poolId],
+      fromBlock: '0x0',
+      toBlock: '0x1',
+    };
+    const logs = await provider.send('eth_getLogs', [rawFilter]);
+    console.log(`  V4 HHI diag ${poolId.slice(0, 18)}: send() OK (${logs.length} logs), no ENS error from filter construction`);
+  } catch (e) {
+    console.log(`  V4 HHI diag ${poolId.slice(0, 18)}: ERROR — ${e.shortMessage || e.message}`);
+    console.log(`  V4 HHI diag STACK: ${(e.stack || '').split('\n').slice(0, 6).join('\n    ')}`);
+    console.log(`  V4 HHI diag rawFilter: address=${V4_POOLMANAGER_HHI} topics0=${MODIFY_LIQ_SIG.slice(0,18)}... topics1=${poolId.slice(0,18)}...`);
+  }
+
+  poolState.hhiChecked = true;
+  poolState.hhiChecking = false;
   return 0;
 }
 
