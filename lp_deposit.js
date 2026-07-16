@@ -380,7 +380,7 @@ async function depositV4(provider, wallet, config) {
     const uint160Max = (1n << 160n) - 1n;
     const [p2Allow] = await permit2.allowance.staticCall(wallet.address, token, V4_NFPM);
     if (p2Allow < uint160Max) {
-      const pmApp = await permit2.approve.populateTransaction(token, V4_NFPM, uint160Max, 0n);
+      const pmApp = await permit2.approve.populateTransaction(token, V4_NFPM, uint160Max, (1n << 48n) - 1n);
       try {
         const tx = await wallet.sendTransaction(pmApp);
         await tx.wait();
