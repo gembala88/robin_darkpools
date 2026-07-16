@@ -586,32 +586,20 @@ const V4_POOLMANAGER_HHI = '0x8366a39cc670b4001a1121b8f6a443a643e40951'.toLowerC
 const MODIFY_LIQ_SIG = topicId('ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)');
 
 async function computeV4HHIPenalty(poolId, poolState) {
-  // DIAGNOSTIC MODE: single-chunk test to capture exact error source
-  // (disabled full scan — 23 chunks × 11M blocks wastes RPC)
-  if (!/^0x[0-9a-fA-F]{64}$/.test(poolId)) return 0;
   if (poolState.hhiChecked) return (poolState.hhiPenalty || 0);
   if (poolState.hhiChecking) return 0;
   poolState.hhiChecking = true;
 
-  try {
-    const provider = await getHHIProvider();
-    const rawFilter = {
-      address: V4_POOLMANAGER_HHI,
-      topics: [MODIFY_LIQ_SIG, poolId],
-      fromBlock: '0x0',
-      toBlock: '0x1',
-    };
-    const logs = await provider.send('eth_getLogs', [rawFilter]);
-    console.log(`  V4 HHI diag ${poolId.slice(0, 18)}: send() OK (${logs.length} logs), no ENS error from filter construction`);
-  } catch (e) {
-    console.log(`  V4 HHI diag ${poolId.slice(0, 18)}: ERROR — ${e.shortMessage || e.message}`);
-    console.log(`  V4 HHI diag STACK: ${(e.stack || '').split('\n').slice(0, 6).join('\n    ')}`);
-    console.log(`  V4 HHI diag rawFilter: address=${V4_POOLMANAGER_HHI} topics0=${MODIFY_LIQ_SIG.slice(0,18)}... topics1=${poolId.slice(0,18)}...`);
-  }
-
-  poolState.hhiChecked = true;
-  poolState.hhiChecking = false;
-  return 0;
+  const result = await Promise.race([
+    _computeV4HHIImpl(poolId, poolState),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('V4 HHI timeout (180s)')), 180000))
+  ]).catch(err => {
+    console.log(`  V4 HHI error for ${poolId.slice(0, 18)}: ${err.shortMessage || err.message}`);
+    poolState.hhiChecked = true;
+    poolState.hhiChecking = false;
+    return 0;
+  });
+  return result;
 }
 
 async function _computeV4HHIImpl(poolId, poolState) {
@@ -619,7 +607,7 @@ async function _computeV4HHIImpl(poolId, poolState) {
   const head = await provider.getBlockNumber();
   const step = 500_000;
   const v4nfpm = new Contract(V4_NFPM_HHI, [
-    'function positions(uint256) view returns (uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)',
+    'function getPositionLiquidity(uint256) view returns (uint128)',
     'function ownerOf(uint256) view returns (address)',
   ], provider);
 
@@ -692,8 +680,7 @@ async function _computeV4HHIImpl(poolId, poolState) {
     const results = await Promise.allSettled(
       batch.map(async tid => {
         try {
-          const [pos, owner] = await Promise.all([v4nfpm.positions(tid), v4nfpm.ownerOf(tid)]);
-          const liq = pos[7];
+          const [liq, owner] = await Promise.all([v4nfpm.getPositionLiquidity(tid), v4nfpm.ownerOf(tid)]);
           if (liq > 0n) return { owner: owner.toLowerCase(), liquidity: liq };
         } catch (e) {}
         return null;
