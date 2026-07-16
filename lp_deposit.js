@@ -236,7 +236,7 @@ async function depositV4(provider, wallet, config) {
   const cashcatBalance = await cashcat.balanceOf(walletAddr);
   const usdgBalance = await usdg.balanceOf(walletAddr);
   console.log(`  Tick current: ${currentTick}`);
-  console.log(`  Range: ${tickLower} → ${tickUpper} (±${config.rangeDownPct || config.rangeSymmetricPct}%)`);
+  console.log(`  Range: ${tickLower} → ${tickUpper} (±${config.rangeSymmetricPct}%)`);
   console.log(`  CASHCAT balance: ${formatEther(cashcatBalance)}`);
   console.log(`  USDG balance:    ${formatUnits(usdgBalance, 6)}`);
 

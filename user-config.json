@@ -74,7 +74,7 @@
   "lp": {
     "enableV3CashcatWeth": true,
     "enableV4CashcatUsdg": true,
-    "lpAmountEthCashcat": 0.005,
+    "lpAmountEthCashcat": 0.01,
     "lpAmountEthWeth": 0.005,
     "lpAmountEthUsdg": 0.005,
     "rangeSymmetricPct": 15,
