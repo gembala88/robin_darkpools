@@ -611,18 +611,41 @@ async function _computeV4HHIImpl(poolId, poolState) {
     'function ownerOf(uint256) view returns (address)',
   ], provider);
 
-  // Collect ModifyLiquidity events for this poolId
+  // Validate poolId — must be valid bytes32 hex
+  if (!/^0x[0-9a-fA-F]{64}$/.test(poolId)) {
+    console.log(`  V4 HHI skip ${poolId.slice(0, 18)}: invalid bytes32`);
+    poolState.hhiChecked = true;
+    poolState.hhiChecking = false;
+    return 0;
+  }
+
+  // Collect ModifyLiquidity events — use raw send() to bypass ethers filter normalization
   const allMods = [];
+  let fetchErrors = 0;
   for (let s = 0; s <= head; s += step) {
     try {
-      const logs = await provider.getLogs({
+      const rawFilter = {
         address: V4_POOLMANAGER_HHI,
         topics: [MODIFY_LIQ_SIG, poolId],
-        fromBlock: s,
-        toBlock: Math.min(s + step - 1, head),
-      });
+        fromBlock: '0x' + s.toString(16),
+        toBlock: '0x' + Math.min(s + step - 1, head).toString(16),
+      };
+      const logs = await provider.send('eth_getLogs', [rawFilter]);
       allMods.push(...logs);
-    } catch (e) {}
+    } catch (e) {
+      fetchErrors++;
+    }
+  }
+
+  if (fetchErrors > 0) {
+    console.log(`  V4 HHI ${poolId.slice(0, 18)}: getLogs had ${fetchErrors} errors, events found: ${allMods.length}`);
+  }
+
+  if (allMods.length === 0) {
+    console.log(`  V4 HHI ${poolId.slice(0, 18)}: no ModifyLiquidity events found`);
+    poolState.hhiChecked = true;
+    poolState.hhiChecking = false;
+    return 0;
   }
 
   // Extract unique tokenIds from positive-amount modifications
@@ -634,7 +657,7 @@ async function _computeV4HHIImpl(poolId, poolState) {
     const amount = amt >= MAX_INT255 ? amt - (1n << 256n) : amt;
     if (amount <= 0n) continue;
 
-    const receipt = await provider.getTransactionReceipt(lg.transactionHash);
+    const receipt = await provider.send('eth_getTransactionReceipt', [lg.transactionHash]);
     if (!receipt) continue;
     for (const rlog of receipt.logs) {
       if (rlog.address.toLowerCase() !== V4_NFPM_HHI) continue;
@@ -644,6 +667,7 @@ async function _computeV4HHIImpl(poolId, poolState) {
   }
 
   if (tokenIds.size < 2) {
+    console.log(`  V4 HHI ${poolId.slice(0, 18)}: only ${tokenIds.size} tokenIds from ModifyLiquidity`);
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
@@ -673,6 +697,7 @@ async function _computeV4HHIImpl(poolId, poolState) {
   const pc = Object.keys(ownerLiq).length;
   const tl = Object.values(ownerLiq).reduce((s, v) => s + v, 0n);
   if (pc < 2 || tl === 0n) {
+    console.log(`  V4 HHI ${poolId.slice(0, 18)}: only ${pc} providers with active positions`);
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
