@@ -18,6 +18,58 @@ const CASHCAT = LP_V3_CASHCAT_WETH.token0;
 const WETH = LP_V3_CASHCAT_WETH.token1;
 const USDG = LP_V4_CASHCAT_USDG.key.currency1;
 
+const ERROR_MAP = {
+  '0x25fbd8be': 'AlreadySubscribed(uint256,address)',
+  '0xace94481': 'BurnNotificationReverted(address,bytes)',
+  '0x6f5ffb7e': 'ContractLocked()',
+  '0xbfb22adf': 'DeadlinePassed(uint256)',
+  '0x3351b260': 'DeltaNotNegative(address)',
+  '0x4c085bf1': 'DeltaNotPositive(address)',
+  '0xed43c3a6': 'GasLimitTooLow()',
+  '0xaaad13f7': 'InputLengthMismatch()',
+  '0xf4d678b8': 'InsufficientBalance()',
+  '0xb0669cbc': 'InvalidContractSignature()',
+  '0x38bbd576': 'InvalidEthSender()',
+  '0x8baa579f': 'InvalidSignature()',
+  '0x4be6321b': 'InvalidSignatureLength()',
+  '0x815e1d64': 'InvalidSigner()',
+  '0x31e30ad0': 'MaximumAmountExceeded(uint128,uint128)',
+  '0x12816f22': 'MinimumAmountInsufficient(uint128,uint128)',
+  '0xe94f10e2': 'ModifyLiquidityNotificationReverted(address,bytes)',
+  '0x7c402b21': 'NoCodeSubscriber()',
+  '0x80e05c00': 'NoSelfPermit()',
+  '0x1fb09b80': 'NonceAlreadyUsed()',
+  '0x0ca968d8': 'NotApproved(address)',
+  '0xae18210a': 'NotPoolManager()',
+  '0x237e6c28': 'NotSubscribed()',
+  '0xd4b05fe0': 'PoolManagerMustBeLocked()',
+  '0x5a9165ff': 'SignatureDeadlineExpired()',
+  '0x81ea5e9e': 'SubscriptionReverted(address,bytes)',
+  '0x82b42900': 'Unauthorized()',
+  '0x5cda29d7': 'UnsupportedAction(uint256)',
+  '0x5090d6c6': 'AlreadyUnlocked()',
+  '0x6e6c9830': 'CurrenciesOutOfOrderOrEqual(address,address)',
+  '0x5212cba1': 'CurrencyNotSettled()',
+  '0x0d89438e': 'DelegateCallNotAllowed()',
+  '0x48f5c3ed': 'InvalidCaller()',
+  '0x54e3ca0d': 'ManagerLocked()',
+  '0xbda73abf': 'MustClearExactPositiveDelta()',
+  '0xb0ec849e': 'NonzeroNativeValue()',
+  '0x486aa307': 'PoolNotInitialized()',
+  '0xc79e5948': 'ProtocolFeeCurrencySynced()',
+  '0xa7abe2f7': 'ProtocolFeeTooLarge(uint24)',
+  '0xbe8b8507': 'SwapAmountCannotBeZero()',
+  '0xb70024f8': 'TickSpacingTooLarge(int24)',
+  '0xe9e90588': 'TickSpacingTooSmall(int24)',
+  '0x30d21641': 'UnauthorizedDynamicLPFeeUpdate()',
+  '0xd81b2f2e': 'AllowanceExpired(uint256)',
+  '0x24d35a26': 'ExcessiveInvalidation()',
+  '0xf96fb071': 'InsufficientAllowance(uint256)',
+  '0x3728b83d': 'InvalidAmount(uint256)',
+  '0x756688fe': 'InvalidNonce()',
+  '0xcd21db4f': 'SignatureExpired(uint256)',
+};
+
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { positions: [] }; }
 }
@@ -281,12 +333,23 @@ async function depositV4(provider, wallet, config) {
   }
   const amount0Max = (1n << 128n) - 1n;
   const amount1Max = (1n << 128n) - 1n;
-  const params = abi.encode(
+  const mintParams = abi.encode(
     ['tuple(address,address,uint24,int24,address)', 'int24', 'int24', 'uint256', 'uint128', 'uint128', 'address', 'bytes'],
     [keyTuple, tickLower, tickUpper, liquidity, amount0Max, amount1Max, walletAddr, '0x']
   );
+  const settlePairParams = abi.encode(
+    ['address', 'address'],
+    [poolKey.currency0, poolKey.currency1]
+  );
+  const takePairParams = abi.encode(
+    ['address', 'address', 'address'],
+    [poolKey.currency0, poolKey.currency1, walletAddr]
+  );
 
-  const actions = new Uint8Array([MINT_POSITION]);
+  const SETTLE_PAIR = 4;
+  const TAKE_PAIR = 5;
+  const actions = new Uint8Array([MINT_POSITION, SETTLE_PAIR, TAKE_PAIR]);
+  const paramsList = [mintParams, settlePairParams, takePairParams];
 
   if (!wallet) {
     console.log('  DRY-RUN: no wallet, skipping mint.');
@@ -326,7 +389,7 @@ async function depositV4(provider, wallet, config) {
 
   const unlockData = abi.encode(
     ['bytes', 'bytes[]'],
-    [new Uint8Array([MINT_POSITION]), [params]]
+    [actions, paramsList]
   );
   const deadline = BigInt(Math.floor(Date.now()/1000) + 1800); // 30 menit
   const pop = await nfpm.modifyLiquidities.populateTransaction(unlockData, deadline);
@@ -345,7 +408,12 @@ async function depositV4(provider, wallet, config) {
   } catch (e) {
     console.log(`  Tx failed: ${e.shortMessage || e.message}`);
     const raw = e.data || e.info?.error?.data || e.error?.data;
-    if (raw && raw !== '0x') console.log(`  Revert data: ${raw.slice(0, 74)}`);
+    if (raw && raw !== '0x') {
+      const sel = raw.slice(0, 10);
+      const known = ERROR_MAP[sel];
+      if (known) console.log(`  Error: ${known}`);
+      else console.log(`  Revert data: ${raw.slice(0, 74)}`);
+    }
     return null;
   }
 }
