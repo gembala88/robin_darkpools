@@ -14,7 +14,13 @@ import { V3, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG } from './config.js';
 import { V3_SWAP_ROUTER_ABI, V3_QUOTERV2_ABI, ERC20_ABI } from './abis.js';
 import { UC } from './config.js';
 
-const WETH_ABI = ['function deposit() payable', 'function withdraw(uint256)'];
+const WETH_ABI = [
+  'function deposit() payable',
+  'function withdraw(uint256)',
+  'function approve(address,uint256) returns (bool)',
+  'function allowance(address,address) view returns (uint256)',
+  'function balanceOf(address) view returns (uint256)',
+];
 const CFG = { dry: process.env.DRY !== '0', live: process.env.DRY === '0' };
 
 const CASHCAT = LP_V3_CASHCAT_WETH.token0;
@@ -61,12 +67,19 @@ async function main() {
   const weth = new Contract(WETH, WETH_ABI, wallet);
   const router = new Contract(V3.swapRouter02, V3_SWAP_ROUTER_ABI, wallet);
 
-  // Step 1: Wrap ALL ETH → WETH
-  console.log('\n--- Step 1: Wrap ETH→WETH ---');
-  const wrapTx = await weth.deposit({ value: totalEth });
-  console.log(`  Tx: ${wrapTx.hash}`);
-  const wrapRc = await wrapTx.wait();
-  console.log(`  Status: ${wrapRc.status === 1 ? 'OK' : 'FAIL'}`);
+  // Step 1: Wrap ETH → WETH (skip if WETH balance already sufficient)
+  const wethBefore = await weth.balanceOf(wallet.address);
+  console.log(`\n--- Step 1: Wrap ETH→WETH (current WETH: ${formatEther(wethBefore)}) ---`);
+  if (wethBefore >= totalEth) {
+    console.log('  WETH balance already sufficient — skipping wrap');
+  } else {
+    const wrapNeeded = totalEth - wethBefore;
+    console.log(`  Wrapping ${formatEther(wrapNeeded)} ETH → WETH`);
+    const wrapTx = await weth.deposit({ value: wrapNeeded });
+    console.log(`  Tx: ${wrapTx.hash}`);
+    const wrapRc = await wrapTx.wait();
+    console.log(`  Status: ${wrapRc.status === 1 ? 'OK' : 'FAIL'}`);
+  }
 
   // Step 2: Approve router for WETH (full amount needed for both swaps)
   const totalWethNeeded = amountCashcatEth + amountUsdgEth;
