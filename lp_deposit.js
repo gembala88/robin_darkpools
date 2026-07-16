@@ -296,6 +296,7 @@ async function depositV4(provider, wallet, config) {
   const nfpm = new Contract(V4_NFPM, V4_NFPM_ABI, wallet);
   const permit2 = new Contract(V4.permit2, [
     'function approve(address token, address spender, uint160 amount, uint48 expiration)',
+    'function allowance(address,address,address) view returns (uint160,uint48,uint48)',
   ], wallet);
 
   // Approve NFPM + Permit2 for BOTH tokens
@@ -310,11 +311,15 @@ async function depositV4(provider, wallet, config) {
       const app = await wallet.sendTransaction(tx);
       await app.wait();
     }
-    const pmApp = await permit2.approve.populateTransaction(token, V4.poolManager, MaxUint256, 0n);
-    try {
-      const tx = await wallet.sendTransaction(pmApp);
-      await tx.wait();
-    } catch { /* already approved */ }
+    const uint160Max = (1n << 160n) - 1n;
+    const [p2Allow] = await permit2.allowance.staticCall(wallet.address, token, V4.poolManager);
+    if (p2Allow < uint160Max) {
+      const pmApp = await permit2.approve.populateTransaction(token, V4.poolManager, uint160Max, 0n);
+      try {
+        const tx = await wallet.sendTransaction(pmApp);
+        await tx.wait();
+      } catch { /* already approved / race */ }
+    }
   }
 
   const pop = await nfpm.modifyLiquiditiesWithoutUnlock.populateTransaction(actions, [params]);
