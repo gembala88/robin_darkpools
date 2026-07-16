@@ -586,20 +586,12 @@ const V4_POOLMANAGER_HHI = '0x8366a39cc670b4001a1121b8f6a443a643e40951'.toLowerC
 const MODIFY_LIQ_SIG = topicId('ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)');
 
 async function computeV4HHIPenalty(poolId, poolState) {
-  if (poolState.hhiChecked) return (poolState.hhiPenalty || 0);
-  if (poolState.hhiChecking) return 0;
-  poolState.hhiChecking = true;
-
-  const result = await Promise.race([
-    _computeV4HHIImpl(poolId, poolState),
-    new Promise((_, rej) => setTimeout(() => rej(new Error('V4 HHI timeout (180s)')), 180000))
-  ]).catch(err => {
-    console.log(`  V4 HHI error for ${poolId.slice(0, 18)}: ${err.shortMessage || err.message}`);
-    poolState.hhiChecked = true;
-    poolState.hhiChecking = false;
-    return 0;
-  });
-  return result;
+  // DISABLED: V4 HHI causes "network does not support ENS" errors on every getLogs chunk
+  // (23 chunks × 11M blocks per V4 pool). RPC usage is wasteful since extreme-pump guard
+  // already catches high-risk V4 pools (e.g. CLAUDEX). CASHCAT is V3 and uses V3 HHI.
+  // Root cause unclear — raw eth_getLogs via provider.send() should bypass ethers
+  // normalization, but ENS error persists. Re-enable when root cause is found.
+  return 0;
 }
 
 async function _computeV4HHIImpl(poolId, poolState) {
