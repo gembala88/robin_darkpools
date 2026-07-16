@@ -6,6 +6,10 @@ import { tgScreener } from './telegram.js';
 import { checkGMGN } from './gmgn.js';
 import { makeProvider } from './provider.js';
 
+const DEXSCREENER_PROFILES = 'https://api.dexscreener.com/token-profiles/latest/v1';
+const DEXSCREENER_BOOSTS = 'https://api.dexscreener.com/token-boosts/latest/v1';
+const DEXSCREENER_TOKEN_PAIRS = 'https://api.dexscreener.com/token-pairs/v1/';
+
 // ===== DEXSCREENER API =====
 const DS_BASE = 'https://api.dexscreener.com/latest/dex';
 
@@ -34,7 +38,12 @@ const coder = AbiCoder.defaultAbiCoder();
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const lc = (a) => a.toLowerCase();
 
-const DS_SEARCH_TERMS = cfgDS('searchTerms') || ['robinhood', 'cashcat', 'ROBINHOOD'];
+const DS_SEARCH_TERMS = cfgDS('searchTerms') || [
+  'robinhood', 'ROBINHOOD', 'Robinhood', 'cashcat', 'CASHCAT',
+  'HOOD', 'CLAUDEX', 'AGENTOS', 'CHAIN', 'CHAINHOOD', 'ROBINHOODCHAIN',
+  'TSUKI', 'LOSS', 'MACRO', 'AGENT', 'MARION', 'IMF', 'SCRY', 'MAQU', 'RHAGENT', 'ELON',
+  'freeop', 'pooch', 'oc', 'bread', 'santacoin', 'trashy', 'mystery',
+];
 
 // ===== SCORE WEIGHTS =====
 const W = {
@@ -170,15 +179,47 @@ async function filterLiquidPools(provider, pools, label) {
   return { liquid, failed: failedPools };
 }
 
-// ===== INITIAL DISCOVERY (DexScreener search ONLY — no on-chain scan) =====
+// ===== TOKEN DISCOVERY (profiles + boosts → token-pairs → search) =====
+async function discoverFromTokenEndpoint(url, label) {
+  let count = 0;
+  try {
+    const data = await (await fetch(url, { signal: AbortSignal.timeout(10000) })).json();
+    if (!Array.isArray(data)) return 0;
+    const rh = data.filter(x => x.chainId === 'robinhood');
+    for (const entry of rh) {
+      const addr = entry.tokenAddress;
+      // Try to find pairs for this token
+      try {
+        const pairs = await (await fetch(DEXSCREENER_TOKEN_PAIRS + 'robinhood/' + addr, { signal: AbortSignal.timeout(5000) })).json();
+        if (Array.isArray(pairs)) {
+          for (const p of pairs) {
+            const key = lc(p.pairAddress);
+            if (!state.pools[key]) {
+              state.pools[key] = poolFromDSPair(p);
+              state.pools[key].discoveredAt = Date.now();
+              count++;
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    console.log(`  ${label}: ${rh.length} tokens, ${count} new pools`);
+  } catch (e) {
+    console.log(`  ${label}: error ${e.message?.slice(0, 50)}`);
+  }
+  return count;
+}
+
+// ===== INITIAL DISCOVERY (DexScreener search + profiles + boosts) =====
 async function runInitialDiscovery() {
   console.log('\n=== Initial LP Pool Discovery ===');
 
-  // Seed from DexScreener search (26-28 relevant pools, confirmed)
-  console.log('Searching DexScreener for initial pools...');
+  // 1. Seed from DexScreener keyword search
+  console.log('Searching DexScreener for pools by keyword...');
   for (const term of DS_SEARCH_TERMS) {
     const j = await fetchDexScreener(`/search?q=${encodeURIComponent(term)}`);
     if (!j?.pairs) continue;
+    let rhCount = 0;
     for (const p of j.pairs) {
       if (p.chainId !== 'robinhood') continue;
       const addr = lc(p.pairAddress);
@@ -186,9 +227,16 @@ async function runInitialDiscovery() {
         state.pools[addr] = poolFromDSPair(p);
         state.pools[addr].discoveredAt = Date.now();
       }
+      rhCount++;
     }
-    console.log(`  "${term}": ${j.pairs.filter(p => p.chainId === 'robinhood').length} robinhood pools`);
+    if (rhCount) console.log(`  keyword "${term}": ${rhCount} rh pools`);
   }
+
+  // 2. Token profiles → token-pairs
+  await discoverFromTokenEndpoint(DEXSCREENER_PROFILES, 'profiles');
+
+  // 3. Token boosts → token-pairs
+  await discoverFromTokenEndpoint(DEXSCREENER_BOOSTS, 'boosts');
 
   saveState();
   console.log(`Total pools tracked: ${Object.keys(state.pools).length}`);
@@ -532,12 +580,138 @@ async function _computeHHIImpl(poolAddr, poolState) {
   return penalty;
 }
 
+// ===== V4 HHI (via PoolManager ModifyLiquidity events) =====
+const V4_NFPM_HHI = '0x58daec3116aae6d93017baaea7749052e8a04fa7'.toLowerCase();
+const V4_POOLMANAGER_HHI = '0x8366a39cc670b4001a1121b8f6a443a643e40951'.toLowerCase();
+const MODIFY_LIQ_SIG = topicId('ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)');
+
+async function computeV4HHIPenalty(poolId, poolState) {
+  if (poolState.hhiChecked) return (poolState.hhiPenalty || 0);
+  if (poolState.hhiChecking) return 0;
+  poolState.hhiChecking = true;
+
+  const result = await Promise.race([
+    _computeV4HHIImpl(poolId, poolState),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('V4 HHI timeout (180s)')), 180000))
+  ]).catch(err => {
+    console.log(`  V4 HHI error for ${poolId.slice(0, 18)}: ${err.shortMessage || err.message}`);
+    poolState.hhiChecked = true;
+    poolState.hhiChecking = false;
+    return 0;
+  });
+  return result;
+}
+
+async function _computeV4HHIImpl(poolId, poolState) {
+  const provider = await getHHIProvider();
+  const head = await provider.getBlockNumber();
+  const step = 500_000;
+  const v4nfpm = new Contract(V4_NFPM_HHI, [
+    'function positions(uint256) view returns (uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)',
+    'function ownerOf(uint256) view returns (address)',
+  ], provider);
+
+  // Collect ModifyLiquidity events for this poolId
+  const allMods = [];
+  for (let s = 0; s <= head; s += step) {
+    try {
+      const logs = await provider.getLogs({
+        address: V4_POOLMANAGER_HHI,
+        topics: [MODIFY_LIQ_SIG, poolId],
+        fromBlock: s,
+        toBlock: Math.min(s + step - 1, head),
+      });
+      allMods.push(...logs);
+    } catch (e) {}
+  }
+
+  // Extract unique tokenIds from positive-amount modifications
+  const tokenIds = new Set();
+  for (const lg of allMods) {
+    const amountHex = '0x' + lg.data.slice(130, 194);
+    const amt = BigInt(amountHex);
+    const MAX_INT255 = 1n << 255n;
+    const amount = amt >= MAX_INT255 ? amt - (1n << 256n) : amt;
+    if (amount <= 0n) continue;
+
+    const receipt = await provider.getTransactionReceipt(lg.transactionHash);
+    if (!receipt) continue;
+    for (const rlog of receipt.logs) {
+      if (rlog.address.toLowerCase() !== V4_NFPM_HHI) continue;
+      if (rlog.topics[0] !== TRANSFER_SIG) continue;
+      if (rlog.topics[3]) tokenIds.add(BigInt(rlog.topics[3]).toString());
+    }
+  }
+
+  if (tokenIds.size < 2) {
+    poolState.hhiChecked = true;
+    poolState.hhiChecking = false;
+    return 0;
+  }
+
+  const ownerLiq = {};
+  const ids = [...tokenIds].map(s => BigInt(s));
+  for (let i = 0; i < ids.length; i += 20) {
+    const batch = ids.slice(i, i + 20);
+    const results = await Promise.allSettled(
+      batch.map(async tid => {
+        try {
+          const [pos, owner] = await Promise.all([v4nfpm.positions(tid), v4nfpm.ownerOf(tid)]);
+          const liq = pos[7];
+          if (liq > 0n) return { owner: owner.toLowerCase(), liquidity: liq };
+        } catch (e) {}
+        return null;
+      })
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value) {
+        ownerLiq[r.value.owner] = (ownerLiq[r.value.owner] || 0n) + r.value.liquidity;
+      }
+    }
+  }
+
+  const pc = Object.keys(ownerLiq).length;
+  const tl = Object.values(ownerLiq).reduce((s, v) => s + v, 0n);
+  if (pc < 2 || tl === 0n) {
+    poolState.hhiChecked = true;
+    poolState.hhiChecking = false;
+    return 0;
+  }
+
+  const hhi = Object.values(ownerLiq).reduce((s, liq) => {
+    const share = Number(liq * 10000n / tl) / 100;
+    return s + share * share;
+  }, 0);
+
+  poolState.hhiScore = Math.round(hhi);
+  poolState.hhiProviderCount = pc;
+  poolState.hhiChecked = true;
+  poolState.hhiChecking = false;
+
+  let penalty = 0;
+  if (hhi > 2500) penalty = -Math.min(Math.round((hhi - 2500) / 150), 50);
+  poolState.hhiPenalty = penalty;
+  poolState.hhiData = { hhi: Math.round(hhi), providers: pc, penalty };
+  console.log(`  V4 HHI for ${poolId.slice(0, 18)}: HHI=${Math.round(hhi)} providers=${pc} penalty=${penalty}`);
+  return penalty;
+}
+
 // ===== FILTERS =====
 function passesFilters(po) {
   const minTvl   = cfgSc('minTvlUsd')   || 5000;
   const minVol   = cfgSc('minVolume24h') || 10000;
   const minSwaps = cfgSc('minSwaps24h')  || 50;
   const excludeV2 = po.version === 'v2' || (po.labels && po.labels.includes('v2'));
+
+  // Dead-token guard: no buys OR insufficient activity
+  if (po.volume24h === 0 || po.buys24h === 0 || po.swaps24h < 5) return false;
+
+  // Extreme-pump guard: age < 24h AND (vol/TVL > 15x OR |priceChange| > 500%)
+  const ageHours = po.pairCreatedAt ? (Date.now() - po.pairCreatedAt) / 3600000 : Infinity;
+  const volTvlRatio = po.tvlUsd > 0 ? po.volume24h / po.tvlUsd : 0;
+  const priceChangeAbs = Math.abs(po.priceChange24h ?? 0);
+  if (ageHours < 24 && (volTvlRatio > 15 || priceChangeAbs > 500)) return false;
+
   return po.tvlUsd >= minTvl && po.volume24h >= minVol && po.swaps24h >= minSwaps && !excludeV2;
 }
 
@@ -648,10 +822,12 @@ async function evaluatePools() {
       await checkPoolGMGN(po);
     }
 
-    // HHI / LP concentration check for candidate pools (once per pool)
-    if (po.score >= (cfgSc('minCandidateScore') || 35) && !po.hhiChecked && !po.hhiChecking) {
+    // HHI / LP concentration check for candidate pools (once per pool, TVL > $50K)
+    if (po.score >= (cfgSc('minCandidateScore') || 35) && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 50000) {
       try {
-        const penalty = await computeHHIPenalty(lc(po.pairAddress), po);
+        const isV4 = (po.labels || []).some(l => l.toLowerCase() === 'v4');
+        const poolAddr = lc(po.pairAddress);
+        const penalty = isV4 ? await computeV4HHIPenalty(poolAddr, po) : await computeHHIPenalty(poolAddr, po);
         if (penalty !== 0) {
           po.score = Math.max(0, po.score + penalty);
           console.log(`  >> HHI penalty: ${penalty} → new score=${po.score}`);
@@ -660,7 +836,6 @@ async function evaluatePools() {
         }
       } catch (err) {
         console.error(`  >> HHI check FAILED for ${po.pairAddress.slice(0, 14)}: ${err.shortMessage || err.message}`);
-        // Mark checked so we don't retry every cycle on the same broken pool
         po.hhiChecked = true;
         po.hhiChecking = false;
         po.hhiFailed = (po.hhiFailed || 0) + 1;
