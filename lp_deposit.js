@@ -68,6 +68,7 @@ const ERROR_MAP = {
   '0x3728b83d': 'InvalidAmount(uint256)',
   '0x756688fe': 'InvalidNonce()',
   '0xcd21db4f': 'SignatureExpired(uint256)',
+  '0x3b99b53d': 'SliceOutOfBounds()',
 };
 
 function loadState() {
@@ -346,8 +347,8 @@ async function depositV4(provider, wallet, config) {
     [poolKey.currency0, poolKey.currency1, walletAddr]
   );
 
-  const SETTLE_PAIR = 4;
-  const TAKE_PAIR = 5;
+  const SETTLE_PAIR = 0x0d;
+  const TAKE_PAIR = 0x11;
   const actions = new Uint8Array([MINT_POSITION, SETTLE_PAIR, TAKE_PAIR]);
   const paramsList = [mintParams, settlePairParams, takePairParams];
 
@@ -377,9 +378,9 @@ async function depositV4(provider, wallet, config) {
       console.log(`    ✅ ERC20 approve done`);
     }
     const uint160Max = (1n << 160n) - 1n;
-    const [p2Allow] = await permit2.allowance.staticCall(wallet.address, token, V4.poolManager);
+    const [p2Allow] = await permit2.allowance.staticCall(wallet.address, token, V4_NFPM);
     if (p2Allow < uint160Max) {
-      const pmApp = await permit2.approve.populateTransaction(token, V4.poolManager, uint160Max, 0n);
+      const pmApp = await permit2.approve.populateTransaction(token, V4_NFPM, uint160Max, 0n);
       try {
         const tx = await wallet.sendTransaction(pmApp);
         await tx.wait();
