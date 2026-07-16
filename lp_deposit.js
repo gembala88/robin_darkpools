@@ -378,9 +378,12 @@ async function depositV4(provider, wallet, config) {
       console.log(`    ✅ ERC20 approve done`);
     }
     const uint160Max = (1n << 160n) - 1n;
-    const [p2Allow] = await permit2.allowance.staticCall(wallet.address, token, V4_NFPM);
-    if (p2Allow < uint160Max) {
-      const pmApp = await permit2.approve.populateTransaction(token, V4_NFPM, uint160Max, (1n << 48n) - 1n);
+    const uint48Max = (1n << 48n) - 1n;
+    const [p2Allow, p2Expiration] = await permit2.allowance.staticCall(wallet.address, token, V4_NFPM);
+    const expired = p2Expiration <= BigInt(Math.floor(Date.now()/1000));
+    if (expired) console.log(`  ${label} Permit2 allowance: amount=${p2Allow}, expiration=${p2Expiration} (EXPIRED, re-approving)`);
+    if (p2Allow < uint160Max || expired) {
+      const pmApp = await permit2.approve.populateTransaction(token, V4_NFPM, uint160Max, uint48Max);
       try {
         const tx = await wallet.sendTransaction(pmApp);
         await tx.wait();
