@@ -304,12 +304,14 @@ async function depositV4(provider, wallet, config) {
     const t = new Contract(token, ERC20_ABI, wallet);
     const bal = await t.balanceOf(wallet.address);
     if (bal === 0n) continue;
-    const allowance = await t.allowance(wallet.address, V4_NFPM);
+    const allowance = await t.allowance(wallet.address, V4.permit2);
     if (allowance < bal) {
-      console.log(`  Approving ${label} for V4 NFPM...`);
-      const tx = await t.approve.populateTransaction(V4_NFPM, MaxUint256);
+      console.log(`  Approving ${label} for Permit2...`);
+      const tx = await t.approve.populateTransaction(V4.permit2, MaxUint256);
       const app = await wallet.sendTransaction(tx);
+      console.log(`    Tx: ${app.hash}`);
       await app.wait();
+      console.log(`    ✅ ERC20 approve done`);
     }
     const uint160Max = (1n << 160n) - 1n;
     const [p2Allow] = await permit2.allowance.staticCall(wallet.address, token, V4.poolManager);
@@ -337,6 +339,8 @@ async function depositV4(provider, wallet, config) {
     return position;
   } catch (e) {
     console.log(`  Tx failed: ${e.shortMessage || e.message}`);
+    const raw = e.data || e.info?.error?.data || e.error?.data;
+    if (raw && raw !== '0x') console.log(`  Revert data: ${raw.slice(0, 74)}`);
     return null;
   }
 }
