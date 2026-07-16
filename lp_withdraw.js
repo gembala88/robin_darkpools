@@ -115,20 +115,15 @@ async function withdrawV4(provider, wallet, config) {
 
   const nfpm = new Contract(V4_NFPM, V4_NFPM_ABI, wallet || provider);
   const tokenId = BigInt(process.env.V4_TOKEN_ID || v4Pos.tokenId || 0);
+  const poolKey = LP_V4_CASHCAT_USDG.key;
 
-  // Get current position info (positions(uint256) selector is 0x99fbab88)
-  const posData = await provider.call({
-    to: V4_NFPM,
-    data: '0x99fbab88' + tokenId.toString(16).padStart(64, '0'),
-  });
-  const pos = AbiCoder.defaultAbiCoder().decode(
-    ['uint96', 'address', 'address', 'address', 'uint24', 'int24', 'int24',
-     'uint128', 'uint256', 'uint256', 'uint128', 'uint128'],
-    posData
-  );
-  const liquidity = pos[7];
-  const currency0 = pos[2];
-  const currency1 = pos[3];
+  // Use getPositionLiquidity(uint256) — positions(uint256) dari V3 TIDAK ADA di V4
+  const v4Reader = new Contract(V4_NFPM, [
+    'function getPositionLiquidity(uint256) view returns (uint128)',
+  ], provider);
+  const liquidity = await v4Reader.getPositionLiquidity(tokenId);
+  const currency0 = poolKey.currency0;
+  const currency1 = poolKey.currency1;
   console.log(`  Token ID: ${tokenId}`);
   console.log(`  Position: ${currency0} / ${currency1}`);
   console.log(`  Liquidity: ${formatUnits(liquidity, 18)}`);
