@@ -190,13 +190,7 @@ async function monitorOnce(provider, config) {
       const result = await checkV3(provider, entry, config);
       if (!result || result.error) {
         console.log(`  V3 #${entry.tokenId}: ${result?.error ?? 'null'}`);
-        // FIX: posisi sudah tertutup/kosong BUKAN kegagalan sistem -- hapus dari
-        // tracking, jangan hitung sebagai anyFail (cegah circuit breaker spam abadi)
-        if (result?.error === 'liquidity zero' || result?.error === 'position burned or not found') {
-          toRemove.push(entry);
-        } else {
-          anyFail = true;
-        }
+        anyFail = true;
         continue;
       }
 
