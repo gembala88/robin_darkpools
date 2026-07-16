@@ -324,7 +324,12 @@ async function depositV4(provider, wallet, config) {
     }
   }
 
-  const pop = await nfpm.modifyLiquiditiesWithoutUnlock.populateTransaction(actions, [params]);
+  const unlockData = abi.encode(
+    ['bytes', 'bytes[]'],
+    [new Uint8Array([MINT_POSITION]), [params]]
+  );
+  const deadline = BigInt(Math.floor(Date.now()/1000) + 1800); // 30 menit
+  const pop = await nfpm.modifyLiquidities.populateTransaction(unlockData, deadline);
   try {
     const tx = await wallet.sendTransaction(pop);
     console.log(`  Mint tx: ${tx.hash}`);
