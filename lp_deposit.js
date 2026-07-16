@@ -353,6 +353,7 @@ async function main() {
   console.log('Config:');
   console.log(`  V3 CASHCAT/WETH: ${config.enableV3CashcatWeth ? 'ENABLED' : 'DISABLED'} (CASHCAT: ${config.lpAmountEthCashcat} ETH | WETH: ${config.lpAmountEthWeth} ETH)`);
   console.log(`  V4 CASHCAT/USDG: ${config.enableV4CashcatUsdg ? 'ENABLED' : 'DISABLED'} (USDG: ${config.lpAmountEthUsdg || 0} ETH)`);
+  console.log(`  Order: V4 → V3 (V4 first, V3 pakai sisa CASHCAT)`);
   console.log(`  Range: ±${config.rangeSymmetricPct}% (symmetric)`);
   console.log(`  Slippage: ${config.slippagePct}%`);
 
@@ -370,21 +371,21 @@ async function main() {
     }
   }
 
-  // Step 2: Deposit V3 (if enabled)
-  let posV3 = null;
-  if (config.enableV3CashcatWeth) {
-    posV3 = await depositV3(provider, wallet, config);
-  }
-
-  // Step 3: Deposit V4 (if enabled)
+  // Step 2: Deposit V4 FIRST (butuh CASHCAT lebih banyak, dapat prioritas)
   let posV4 = null;
   if (config.enableV4CashcatUsdg) {
     posV4 = await depositV4(provider, wallet, config);
   }
 
+  // Step 3: Deposit V3 SECOND (pakai sisa CASHCAT, toleran terhadap kurang)
+  let posV3 = null;
+  if (config.enableV3CashcatWeth) {
+    posV3 = await depositV3(provider, wallet, config);
+  }
+
   console.log('\n=== RESULTS ===');
-  if (posV3) console.log(`V3: token0=CASHCAT token1=WETH fee=10000 tickL=${posV3.tickLower} tickU=${posV3.tickUpper}`);
   if (posV4) console.log(`V4: currency0=${posV4.key?.currency0?.slice(0,10)||'?'} currency1=${posV4.key?.currency1?.slice(0,10)||'?'}`);
+  if (posV3) console.log(`V3: token0=CASHCAT token1=WETH fee=10000 tickL=${posV3.tickLower} tickU=${posV3.tickUpper}`);
 
   if (!wallet) console.log('\nDRY-RUN complete. To execute: DRY=0 PRIVATE_KEY=0x.. node lp_deposit.js');
 }
