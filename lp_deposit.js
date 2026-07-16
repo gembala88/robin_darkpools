@@ -368,26 +368,36 @@ async function depositV4(provider, wallet, config) {
     const t = new Contract(token, ERC20_ABI, wallet);
     const bal = await t.balanceOf(wallet.address);
     if (bal === 0n) continue;
-    const allowance = await t.allowance(wallet.address, V4.permit2);
-    if (allowance < bal) {
-      console.log(`  Approving ${label} for Permit2...`);
+    const erc20Allow = await t.allowance(wallet.address, V4.permit2);
+    if (erc20Allow < bal) {
+      console.log(`  ${label} ERC20 → Permit2 allowance: ${formatUnits(erc20Allow, decimals)} (need ${formatUnits(bal, decimals)})`);
+      console.log(`  Approving ${label} ERC20 for Permit2...`);
       const tx = await t.approve.populateTransaction(V4.permit2, MaxUint256);
       const app = await wallet.sendTransaction(tx);
       console.log(`    Tx: ${app.hash}`);
       await app.wait();
       console.log(`    ✅ ERC20 approve done`);
+    } else {
+      console.log(`  ${label} ERC20 → Permit2 allowance: ${formatUnits(erc20Allow, decimals)} (OK)`);
     }
     const uint160Max = (1n << 160n) - 1n;
     const uint48Max = (1n << 48n) - 1n;
     const [p2Allow, p2Expiration] = await permit2.allowance.staticCall(wallet.address, token, V4_NFPM);
-    const expired = p2Expiration <= BigInt(Math.floor(Date.now()/1000));
-    if (expired) console.log(`  ${label} Permit2 allowance: amount=${p2Allow}, expiration=${p2Expiration} (EXPIRED, re-approving)`);
+    const now = BigInt(Math.floor(Date.now()/1000));
+    const expired = p2Expiration <= now;
+    console.log(`  ${label} Permit2 → NFPM: amount=${p2Allow}, expiration=${p2Expiration}${expired ? ' (EXPIRED)' : ' (OK)'}`);
     if (p2Allow < uint160Max || expired) {
+      console.log(`  ${label} Permit2 re-approving...`);
       const pmApp = await permit2.approve.populateTransaction(token, V4_NFPM, uint160Max, uint48Max);
-      try {
-        const tx = await wallet.sendTransaction(pmApp);
-        await tx.wait();
-      } catch { /* already approved / race */ }
+      const tx = await wallet.sendTransaction(pmApp);
+      console.log(`    Tx: ${tx.hash}`);
+      await tx.wait();
+      console.log(`    ✅ Permit2 approve done`);
+      // Verify after approve
+      const [p2NewAllow, p2NewExp] = await permit2.allowance.staticCall(wallet.address, token, V4_NFPM);
+      const stillExpired = p2NewExp <= now;
+      console.log(`  ${label} Permit2 → NFPM (after approve): amount=${p2NewAllow}, expiration=${p2NewExp}${stillExpired ? ' (STILL EXPIRED!)' : ' (OK)'}`);
+      if (stillExpired) throw new Error(`${label} Permit2 allowance STILL expired after re-approve — tx might have succeeded but expiration not updated`);
     }
   }
 
