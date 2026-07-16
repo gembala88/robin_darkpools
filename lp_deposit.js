@@ -413,7 +413,19 @@ async function depositV4(provider, wallet, config) {
     const receipt = await tx.wait();
     console.log(`  Status: ${receipt.status === 1 ? 'OK' : 'FAIL'}`);
 
-    const position = { dex: 'V4', pool: LP_V4_CASHCAT_USDG.symbol, block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
+    // Extract tokenId from Transfer event (same ERC-721 pattern as V3)
+    let tokenId = null;
+    for (const log of receipt.logs) {
+      if (log.address.toLowerCase() === V4_NFPM.toLowerCase() &&
+          log.topics[0] === '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef' &&
+          log.topics[1] === '0x0000000000000000000000000000000000000000000000000000000000000000') {
+        tokenId = BigInt(log.topics[3]).toString();
+        break;
+      }
+    }
+    console.log(`  Token ID: ${tokenId}`);
+
+    const position = { dex: 'V4', pool: LP_V4_CASHCAT_USDG.symbol, tokenId, block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
     const state = loadState();
     state.positions.push(position);
     saveState(state);
