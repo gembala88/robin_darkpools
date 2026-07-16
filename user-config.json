@@ -73,9 +73,10 @@
   "--- LP DEPOSIT/WITHDRAW ---": "All settings for V3+V4 LP positions",
   "lp": {
     "enableV3CashcatWeth": true,
-    "enableV4CashcatUsdg": false,
+    "enableV4CashcatUsdg": true,
     "lpAmountEthCashcat": 0.005,
     "lpAmountEthWeth": 0.005,
+    "lpAmountEthUsdg": 0.005,
     "rangeSymmetricPct": 15,
     "rangeDownPct": 20,
     "slippagePct": 1,

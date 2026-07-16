@@ -111,18 +111,19 @@ export const LP_V3_CASHCAT_WETH = {
   symbol: 'CASHCAT/WETH-1%',
 };
 
-// V4: CASHCAT/USDG 0.5% — most liquid V4 fee tier for this pair
-// PoolKey: currency0=CASHCAT (lower addr), currency1=USDG, fee=5000, tickSpacing=10, hooks=0x0
+// V4: CASHCAT/USDG 0.269% — top V4 pool (DexScreener: $1.2M TVL, $15M/24h vol)
+// PoolKey: currency0=CASHCAT (lower addr), currency1=USDG, fee=2690, tickSpacing=54, hooks=0x0
+// poolId=0xa92a3df27a00a276183ff7265fd8affa11df1fe8bb23ddfaf13f6c879a3f818b
 export const LP_V4_CASHCAT_USDG = {
   key: {
     currency0: '0x020bfc650a365f8bb26819deaabf3e21291018b4',
     currency1: '0x5fc5360d0400a0fd4f2af552add042d716f1d168',
-    fee: 5000,
-    tickSpacing: 10,
+    fee: 2690,
+    tickSpacing: 54,
     hooks: '0x0000000000000000000000000000000000000000',
   },
-  poolId: null, // computed at runtime
-  symbol: 'CASHCAT/USDG-0.5%',
+  poolId: '0xa92a3df27a00a276183ff7265fd8affa11df1fe8bb23ddfaf13f6c879a3f818b',
+  symbol: 'CASHCAT/USDG-0.269%',
 };
 
 // backward-compat: first pool

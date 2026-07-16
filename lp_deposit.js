@@ -43,13 +43,16 @@ async function getV3Tick(provider) {
   return Number(decoded[1]);
 }
 
-// Get current tick from V4 pool via StateView or PoolManager
-async function getV4Tick(provider) {
+// Get current tick and sqrtPriceX96 from V4 pool
+async function getV4Slot0(provider) {
   const poolId = computeV4PoolId(LP_V4_CASHCAT_USDG.key);
   const stateView = new Contract(V4.stateView, [
     'function getSlot0(bytes32) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)',
   ], provider);
-  const [, tick] = await stateView.getSlot0.staticCall(poolId);
+  return await stateView.getSlot0.staticCall(poolId);
+}
+async function getV4Tick(provider) {
+  const [, tick] = await getV4Slot0(provider);
   return Number(tick);
 }
 
@@ -218,27 +221,64 @@ async function depositV3(provider, wallet, config) {
 // Deposit V4 position via modifyLiquiditiesWithoutUnlock
 // Uses actions: MINT_POSITION=2
 async function depositV4(provider, wallet, config) {
-  console.log('\n=== V4 CASHCAT/USDG 0.5% Deposit ===');
+  console.log('\n=== V4 CASHCAT/USDG 0.269% Deposit ===');
   if (!config.enableV4CashcatUsdg) { console.log('  SKIPPED (disabled in config)'); return null; }
 
-  const currentTick = await getV4Tick(provider);
-  const { tickLower, tickUpper } = computeTickRange(currentTick, config.rangeDownPct);
-  const ethAmount = parseEther(String(config.lpSizeEthCashcatUsdg));
-
-  console.log(`  Tick current: ${currentTick}`);
-  console.log(`  Range: ${tickLower} → ${tickUpper} (-${config.rangeDownPct}% → 0%)`);
+  const [sqrtPriceX96BN, currentTickBN] = await getV4Slot0(provider);
+  const sqrtPriceX96 = BigInt(sqrtPriceX96BN);
+  const currentTick = Number(currentTickBN);
+  const tickSpacing = LP_V4_CASHCAT_USDG.key.tickSpacing;
+  const { tickLower, tickUpper } = computeTickRange(currentTick, config.rangeSymmetricPct, tickSpacing);
 
   const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
+  const usdg = new Contract(USDG, ERC20_ABI, provider);
   const walletAddr = wallet?.address || (process.env.PRIVATE_KEY ? new Wallet(process.env.PRIVATE_KEY).address : NATIVE);
   const cashcatBalance = await cashcat.balanceOf(walletAddr);
+  const usdgBalance = await usdg.balanceOf(walletAddr);
+  console.log(`  Tick current: ${currentTick}`);
+  console.log(`  Range: ${tickLower} → ${tickUpper} (±${config.rangeDownPct || config.rangeSymmetricPct}%)`);
   console.log(`  CASHCAT balance: ${formatEther(cashcatBalance)}`);
+  console.log(`  USDG balance:    ${formatUnits(usdgBalance, 6)}`);
 
   const poolKey = LP_V4_CASHCAT_USDG.key;
   const keyTuple = [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks];
 
-  // MINT_POSITION action = 2 (VERIFIED from on-chain tx 0xb26e7e8c...)
   const MINT_POSITION = 2;
-  const liquidity = cashcatBalance;
+  let liquidity;
+  let sqrtPaX96;
+  let sqrtPbX96;
+  const Q96 = 1n << 96n;
+
+  if (sqrtPriceX96 === 0n) {
+    console.log('  V4 pool is uninitialized (no liquidity yet). First LP uses both tokens at initial sqrt(1)·2^96.');
+    const initialSqrtP = 1n << 96n;
+    sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, initialSqrtP);
+    sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, initialSqrtP);
+    const L0 = cashcatBalance * initialSqrtP * sqrtPbX96 / ((sqrtPbX96 - initialSqrtP) * Q96);
+    const L1 = usdgBalance * Q96 / (initialSqrtP - sqrtPaX96);
+    liquidity = L0 < L1 ? L0 : L1;
+    console.log(`  L0 (CASHCAT-bound): ${L0}`);
+    console.log(`  L1 (USDG-bound):    ${L1}`);
+    console.log(`  L = ${liquidity}`);
+  } else {
+    sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, sqrtPriceX96);
+    sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, sqrtPriceX96);
+    const L0 = cashcatBalance * sqrtPriceX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPriceX96) * Q96);
+    const L1 = usdgBalance * Q96 / (sqrtPriceX96 - sqrtPaX96);
+    liquidity = L0 < L1 ? L0 : L1;
+    const bindingSide = L0 < L1 ? 'CASHCAT' : 'USDG';
+    let expected0 = cashcatBalance, expected1 = usdgBalance;
+    if (liquidity === L0) {
+      expected1 = liquidity * (sqrtPriceX96 - sqrtPaX96) / Q96;
+    } else {
+      expected0 = liquidity * (sqrtPbX96 - sqrtPriceX96) * Q96 / (sqrtPriceX96 * sqrtPbX96);
+    }
+    console.log(`  L0 (CASHCAT-bound): ${L0}`);
+    console.log(`  L1 (USDG-bound):    ${L1}`);
+    console.log(`  L = ${liquidity} (${bindingSide}-constrained)`);
+    console.log(`  Expected CASHCAT used: ${formatEther(expected0)}`);
+    console.log(`  Expected USDG used:    ${formatUnits(expected1, 6)}`);
+  }
   const amount0Max = (1n << 128n) - 1n;
   const amount1Max = (1n << 128n) - 1n;
   const params = abi.encode(
@@ -247,42 +287,43 @@ async function depositV4(provider, wallet, config) {
   );
 
   const actions = new Uint8Array([MINT_POSITION]);
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + config.deadlineSec);
 
   if (!wallet) {
-    console.log('  DRY-RUN: no wallet, skipping.');
+    console.log('  DRY-RUN: no wallet, skipping mint.');
     return { key: poolKey, tickLower, tickUpper, liquidity: liquidity.toString(), actions: Array.from(actions) };
   }
 
   const nfpm = new Contract(V4_NFPM, V4_NFPM_ABI, wallet);
-
-  // Approve NFPM to spend CASHCAT if needed
-  const allowance = await cashcat.allowance(wallet.address, V4_NFPM);
-  if (allowance < cashcatBalance) {
-    console.log('  Approving CASHCAT for V4 NFPM...');
-    const tx = await cashcat.approve.populateTransaction(V4_NFPM, MaxUint256);
-    const app = await wallet.sendTransaction(tx);
-    await app.wait();
-  }
-
-  // Also need to approve PoolManager via Permit2 for V4
   const permit2 = new Contract(V4.permit2, [
     'function approve(address token, address spender, uint160 amount, uint48 expiration)',
   ], wallet);
-  const pmApp = await permit2.approve.populateTransaction(CASHCAT, V4.poolManager, MaxUint256, 0n);
-  try {
-    const tx = await wallet.sendTransaction(pmApp);
-    await tx.wait();
-  } catch { /* may already be approved */ }
+
+  // Approve NFPM + Permit2 for BOTH tokens
+  for (const [token, label, decimals] of [[CASHCAT, 'CASHCAT', 18], [USDG, 'USDG', 6]]) {
+    const t = new Contract(token, ERC20_ABI, wallet);
+    const bal = await t.balanceOf(wallet.address);
+    if (bal === 0n) continue;
+    const allowance = await t.allowance(wallet.address, V4_NFPM);
+    if (allowance < bal) {
+      console.log(`  Approving ${label} for V4 NFPM...`);
+      const tx = await t.approve.populateTransaction(V4_NFPM, MaxUint256);
+      const app = await wallet.sendTransaction(tx);
+      await app.wait();
+    }
+    const pmApp = await permit2.approve.populateTransaction(token, V4.poolManager, MaxUint256, 0n);
+    try {
+      const tx = await wallet.sendTransaction(pmApp);
+      await tx.wait();
+    } catch { /* already approved */ }
+  }
 
   const pop = await nfpm.modifyLiquiditiesWithoutUnlock.populateTransaction(actions, [params]);
   try {
     const tx = await wallet.sendTransaction(pop);
     console.log(`  Mint tx: ${tx.hash}`);
     const receipt = await tx.wait();
-    console.log(`  Status: ${receipt.status === 1 ? '✅' : '❌'}`);
+    console.log(`  Status: ${receipt.status === 1 ? 'OK' : 'FAIL'}`);
 
-    // Log the position
     const position = { dex: 'V4', pool: LP_V4_CASHCAT_USDG.symbol, block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
     const state = loadState();
     state.positions.push(position);
@@ -290,7 +331,7 @@ async function depositV4(provider, wallet, config) {
 
     return position;
   } catch (e) {
-    console.log(`  ❌ Tx failed: ${e.shortMessage || e.message}`);
+    console.log(`  Tx failed: ${e.shortMessage || e.message}`);
     return null;
   }
 }
@@ -311,7 +352,7 @@ async function main() {
   console.log('\n=== LP DEPOSIT ========================================');
   console.log('Config:');
   console.log(`  V3 CASHCAT/WETH: ${config.enableV3CashcatWeth ? 'ENABLED' : 'DISABLED'} (CASHCAT: ${config.lpAmountEthCashcat} ETH | WETH: ${config.lpAmountEthWeth} ETH)`);
-  console.log(`  V4 CASHCAT/USDG: ${config.enableV4CashcatUsdg ? 'ENABLED' : 'DISABLED'} (${config.lpAmountEthCashcat} ETH)`);
+  console.log(`  V4 CASHCAT/USDG: ${config.enableV4CashcatUsdg ? 'ENABLED' : 'DISABLED'} (USDG: ${config.lpAmountEthUsdg || 0} ETH)`);
   console.log(`  Range: ±${config.rangeSymmetricPct}% (symmetric)`);
   console.log(`  Slippage: ${config.slippagePct}%`);
 
