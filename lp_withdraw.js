@@ -6,6 +6,7 @@
 
 import 'dotenv/config';
 import fs from 'node:fs';
+import path from 'node:path';
 import { Contract, Wallet, parseEther, formatEther, formatUnits, AbiCoder } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG } from './config.js';
@@ -22,7 +23,7 @@ function loadState() {
 
 // ===== V3 WITHDRAW =====
 export async function withdrawV3(provider, wallet, tokenId, config) {
-  console.log(`\\n=== V3 Withdraw tokenId=${tokenId} ===`);
+  console.log(`\n=== V3 Withdraw tokenId=${tokenId} ===`);
 
   const nfpm = new Contract(V3.nfpm, V3_NFPM_ABI, wallet || provider);
 
@@ -47,7 +48,7 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
     console.log('  Liquidity already 0, skipping decreaseLiquidity');
   } else {
     // Step 1: decreaseLiquidity
-    console.log('\\n  Step 1: decreaseLiquidity...');
+    console.log('\n  Step 1: decreaseLiquidity...');
     const decParams = {
       tokenId,
       liquidity: pos.liquidity,
@@ -61,11 +62,11 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
     const decTx = await wallet.sendTransaction(decPop);
     console.log(`  decreaseLiquidity tx: ${decTx.hash}`);
     await decTx.wait();
-    console.log('  ✅ decrease done');
+    console.log('  decrease done');
   }
 
   // Step 2: collect fees
-  console.log('\\n  Step 2: collect fees...');
+  console.log('\n  Step 2: collect fees...');
   const colParams = {
     tokenId,
     recipient: wallet.address,
@@ -77,19 +78,19 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
     const colTx = await wallet.sendTransaction(colPop);
     console.log(`  collect tx: ${colTx.hash}`);
     await colTx.wait();
-    console.log('  ✅ collect done');
+    console.log('  collect done');
   } catch (e) {
     console.log(`  collect failed (may be fine): ${e.shortMessage?.slice(0,60) || e.message?.slice(0,60)}`);
   }
 
   // Step 3: burn (optional)
-  console.log('\\n  Step 3: burn...');
+  console.log('\n  Step 3: burn...');
   const burnPop = await nfpm.burn.populateTransaction(tokenId);
   try {
     const burnTx = await wallet.sendTransaction(burnPop);
     console.log(`  burn tx: ${burnTx.hash}`);
     await burnTx.wait();
-    console.log('  ✅ NFT burned');
+    console.log('  NFT burned');
   } catch (e) {
     console.log(`  burn failed (expected if liquidity>0): ${e.shortMessage?.slice(0,60) || e.message?.slice(0,60)}`);
   }
@@ -97,17 +98,14 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
   // Show final balances
   const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
   const finalBal = await cashcat.balanceOf(wallet.address);
-  console.log(`\\n  Final CASHCAT balance: ${formatEther(finalBal)}`);
+  console.log(`\n  Final CASHCAT balance: ${formatEther(finalBal)}`);
 }
 
 // ===== V4 WITHDRAW =====
 async function withdrawV4(provider, wallet, config) {
-  console.log(`\\n=== V4 Withdraw (CASHCAT/USDG) ===`);
+  console.log(`\n=== V4 Withdraw (CASHCAT/USDG) ===`);
   if (!config.enableV4CashcatUsdg) { console.log('  SKIPPED (disabled)'); return; }
 
-  // V4 NFPM doesn't have a simple decreaseLiquidity — uses modifyLiquiditiesWithoutUnlock
-  // DECREASE_LIQUIDITY action = 1 (VERIFIED from on-chain tx 0x66cb2554...)
-  // Need tokenId from state file or env
   const state = loadState();
   const v4Pos = state.positions.find(p => p.dex === 'V4');
   if (!v4Pos && !process.env.V4_TOKEN_ID) {
@@ -117,19 +115,6 @@ async function withdrawV4(provider, wallet, config) {
 
   const nfpm = new Contract(V4_NFPM, V4_NFPM_ABI, wallet || provider);
   const tokenId = BigInt(process.env.V4_TOKEN_ID || v4Pos.tokenId || 0);
-
-  if (!wallet) {
-    console.log('  DRY-RUN mode');
-    console.log(`  V4 NFPM does not have a standalone decreaseLiquidity function.`);
-    console.log(`  Using modifyLiquiditiesWithoutUnlock with DECREASE_LIQUIDITY action.`);
-    console.log(`  Token ID: ${tokenId}`);
-    return;
-  }
-
-  // For V4, use modifyLiquiditiesWithoutUnlock with DECREASE_LIQUIDITY action
-  // DECREASE_LIQUIDITY = 1, TAKE = 21 (standard V4 Actions library)
-  const DECREASE = 1;
-  const TAKE = 21;
 
   // Get current position info (positions(uint256) selector is 0x99fbab88)
   const posData = await provider.call({
@@ -144,6 +129,7 @@ async function withdrawV4(provider, wallet, config) {
   const liquidity = pos[7];
   const currency0 = pos[2];
   const currency1 = pos[3];
+  console.log(`  Token ID: ${tokenId}`);
   console.log(`  Position: ${currency0} / ${currency1}`);
   console.log(`  Liquidity: ${formatUnits(liquidity, 18)}`);
 
@@ -152,36 +138,50 @@ async function withdrawV4(provider, wallet, config) {
     return;
   }
 
-  // Build actions: DECREASE followed by TAKE for both currencies
+  if (!wallet) {
+    console.log('  DRY-RUN mode');
+    console.log(`  Would call modifyLiquidities with actions: DECREASE_LIQUIDITY(1) + TAKE_PAIR(0x11)`);
+    console.log(`  (modifyLiquiditiesWithoutUnlock + ManagerLocked fix, same pattern as mint)`);
+    return;
+  }
+
+  // Actions: DECREASE_LIQUIDITY(1) + TAKE_PAIR(0x11)
+  // TAKE_PAIR sends both tokens back to wallet (opposite of SETTLE_PAIR in mint)
   const decreaseParams = abi.encode(
     ['uint256', 'uint256', 'uint128', 'uint128', 'bytes'],
     [tokenId, liquidity, 0n, 0n, '0x']
   );
-
-  const actions = new Uint8Array([DECREASE]);
-  console.log('  Calling modifyLiquiditiesWithoutUnlock...');
-  const pop = await nfpm.modifyLiquiditiesWithoutUnlock.populateTransaction(
-    actions, [decreaseParams]
+  const takeParams = abi.encode(
+    ['address', 'address', 'address'],
+    [currency0, currency1, wallet.address]
   );
+
+  const DECREASE = 1;
+  const TAKE_PAIR = 0x11;
+  const actions = new Uint8Array([DECREASE, TAKE_PAIR]);
+  const paramsList = [decreaseParams, takeParams];
+
+  console.log(`  Actions: [DECREASE_LIQUIDITY(1), TAKE_PAIR(0x11)]`);
+
+  const unlockData = abi.encode(
+    ['bytes', 'bytes[]'],
+    [actions, paramsList]
+  );
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800); // 30 menit
+
+  console.log('  Calling modifyLiquidities (with auto-unlock)...');
+  const pop = await nfpm.modifyLiquidities.populateTransaction(unlockData, deadline);
 
   try {
     const tx = await wallet.sendTransaction(pop);
     console.log(`  Withdraw tx: ${tx.hash}`);
     const receipt = await tx.wait();
-    console.log(`  Status: ${receipt.status === 1 ? '✅' : '❌'}`);
+    console.log(`  Status: ${receipt.status === 1 ? 'OK' : 'FAIL'}`);
   } catch (e) {
-    console.log(`  ❌ Tx failed: ${e.shortMessage?.slice(0,100) || e.message?.slice(0,100)}`);
-
-    // Fallback: try multicall approach
-    console.log('\\n  Trying multicall fallback...');
-    const mcPop = await nfpm.multicall.populateTransaction([pop.data]);
-    try {
-      const mcTx = await wallet.sendTransaction(mcPop);
-      console.log(`  Multicall tx: ${mcTx.hash}`);
-      await mcTx.wait();
-      console.log('  ✅ Done via multicall');
-    } catch (e2) {
-      console.log(`  ❌ Multicall also failed: ${e2.shortMessage?.slice(0,60)}`);
+    console.log(`  Tx failed: ${e.shortMessage || e.message}`);
+    const raw = e.data || e.info?.error?.data || e.error?.data;
+    if (raw && raw !== '0x') {
+      console.log(`  Revert data: ${raw.slice(0, 74)}`);
     }
   }
 
@@ -218,7 +218,7 @@ async function main() {
     } else if (v3InState?.tokenId) {
       await withdrawV3(provider, wallet, BigInt(v3InState.tokenId), config);
     } else {
-      console.log('\\nNo V3 position found. Use TOKEN_ID= env or run deposit first.');
+      console.log('\nNo V3 position found. Use TOKEN_ID= env or run deposit first.');
       console.log('DRY-RUN: showing V3 withdraw plan:');
       await withdrawV3(provider, wallet, BigInt(1), config);
     }
@@ -238,7 +238,7 @@ async function main() {
         !(p.dex === 'V4' && p.tokenId === process.env.V4_TOKEN_ID)
       );
       fs.writeFileSync(STATE_FILE, JSON.stringify(updated, null, 2));
-      console.log('\\nState cleaned.');
+      console.log('\nState cleaned.');
     }
   }
 
@@ -246,8 +246,7 @@ async function main() {
 }
 
 // Only auto-execute if this is the main module (not imported)
-const isMain = import.meta.url.startsWith('file://') && process.argv[1] &&
-  import.meta.url === new URL(process.argv[1], 'file://').href;
+const isMain = process.argv[1] && path.basename(process.argv[1]) === path.basename(import.meta.url);
 if (isMain) {
   main().catch(e => { console.error('FAILED:', e.shortMessage || e.message); process.exit(1); });
 }
