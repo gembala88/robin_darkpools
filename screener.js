@@ -770,7 +770,17 @@ async function main() {
   knownPoolTokens = await loadKnownPoolTokens(provider);
 
   currentHead = await provider.getBlockNumber();
+  if (currentHead > 10_000_000_000) {
+    console.log(`  suspicious head ${currentHead}, defaulting to 0`);
+    currentHead = 0;
+  }
   console.log(`head: ${currentHead} | factories: ${Object.keys(FACTORIES).length}`);
+
+  // Correct corrupted lastScannedBlock (e.g. 999M after RPC glitch)
+  if (state.lastScannedBlock > currentHead) {
+    console.log(`  correcting lastScannedBlock from ${state.lastScannedBlock} → ${currentHead}`);
+    state.lastScannedBlock = currentHead;
+  }
 
   // Wire up Telegram command context
   setCommandCtx({
@@ -817,13 +827,21 @@ async function main() {
   setInterval(async () => {
     try {
       currentHead = await provider.getBlockNumber();
+      // Sanity check: reject absurd block-number jumps (RPC glitch protection)
+      if (currentHead > state.lastScannedBlock + 500_000 || currentHead > 10_000_000_000) {
+        console.log(`  head ${currentHead} jumped ${currentHead - state.lastScannedBlock} blocks — capping at +10K`);
+        currentHead = Math.min(state.lastScannedBlock + 10_000, currentHead);
+      }
+      // Reset if lastScannedBlock is ahead of currentHead (e.g. from corrupted state)
+      if (state.lastScannedBlock > currentHead) {
+        console.log(`  correcting lastScannedBlock from ${state.lastScannedBlock} → ${currentHead}`);
+        state.lastScannedBlock = currentHead;
+      }
       if (currentHead > state.lastScannedBlock) {
         const fromBlock = state.lastScannedBlock + 1;
-        state.lastScannedBlock = currentHead;
         const evCount = await scanRange(provider, fromBlock, currentHead);
-        if (evCount > 0) {
-          await evaluateAndNotify(provider, currentHead, false);
-        }
+        state.lastScannedBlock = currentHead; // advance only AFTER scan succeeds
+        await evaluateAndNotify(provider, currentHead, false);
       }
 
       if (Date.now() - lastCurveRefresh > CFG.refreshCurvesSec * 1000) {
