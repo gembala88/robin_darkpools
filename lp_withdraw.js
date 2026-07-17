@@ -212,21 +212,27 @@ async function swapBackAfterWithdraw(provider, wallet, tokens, config) {
       console.log(`  ${token.slice(0, 10)}: balance 0, skip`);
       continue;
     }
-    // Try to quote token → WETH via V3 quoter (fee=10000 = 1%, same as CASHCAT/WETH pool)
+    // Try multiple V3 fee tiers: 0.01%, 0.05%, 0.3%, 1%
+    const FEE_TIERS = [100, 500, 3000, 10000];
     const quoter = new Contract(QUOTER, [
       'function quoteExactInputSingle((address,address,uint256,uint24,uint160)) returns (uint256,uint160,uint32,uint256)',
     ], provider);
-    let amountOut;
-    try {
-      const result = await quoter.quoteExactInputSingle.staticCall([token, WETH, bal, 10000, 0]);
-      amountOut = result[0];
-    } catch (e) {
-      console.log(`  ${token.slice(0, 10)}: swap quote failed (no pool?), skip — ${e.shortMessage?.slice(0, 60) || e.message?.slice(0, 60)}`);
+    let amountOut, fee;
+    for (const f of FEE_TIERS) {
+      try {
+        const result = await quoter.quoteExactInputSingle.staticCall([token, WETH, bal, f, 0]);
+        amountOut = result[0];
+        fee = f;
+        break;
+      } catch { /* try next fee tier */ }
+    }
+    if (!fee) {
+      console.log(`  ${token.slice(0, 10)}: no pool found in any fee tier, skip`);
       failed.push(token);
       continue;
     }
     const amountOutMin = amountOut - (amountOut * BigInt(config.slippagePct)) / 100n;
-    console.log(`  ${token.slice(0, 10)} → WETH: ${formatEther(bal)} → ${formatEther(amountOut)} (min ${formatEther(amountOutMin)})`);
+    console.log(`  ${token.slice(0, 10)} → WETH: ${formatEther(bal)} → ${formatEther(amountOut)} (fee=${fee}, min ${formatEther(amountOutMin)})`);
 
     if (!wallet) continue; // DRY: skip the rest, next token
 
@@ -240,12 +246,12 @@ async function swapBackAfterWithdraw(provider, wallet, tokens, config) {
       console.log(`    Approve tx: ${appTx.hash}`);
     }
 
-    // Execute swap
+    // Execute swap with the found fee tier
     const router = new Contract(SWAP_ROUTER, [
       'function exactInputSingle((address,address,uint24,address,uint256,uint256,uint160)) payable returns (uint256)',
     ], wallet);
     try {
-      const params = [token, WETH, 10000, wallet.address, bal, amountOutMin, 0];
+      const params = [token, WETH, fee, wallet.address, bal, amountOutMin, 0];
       const pop = await router.exactInputSingle.populateTransaction(params);
       const tx = await wallet.sendTransaction(pop);
       console.log(`    Swap tx: ${tx.hash}`);
