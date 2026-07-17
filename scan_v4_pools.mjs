@@ -10,12 +10,11 @@
 
 import 'dotenv/config';
 import fs from 'node:fs';
-import { Contract, AbiCoder, keccak256, getAddress, formatEther } from 'ethers';
+import { Contract, AbiCoder, keccak256, getAddress } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V4 } from './config.js';
 
 const STATE_VIEW = V4.stateView;
-const SLOT0_SIG = '0xc815641c'; // keccak256("getSlot0(bytes32)")[:4]
 const BATCH = 25;
 const TIMEOUT_MS = 10000;
 const FEE_TIERS = [
@@ -62,19 +61,20 @@ async function main() {
   const start = Date.now();
   const active = [];
 
+  // Use ethers Contract (not raw selector) — same pattern as lp_deposit.js getV4Slot0()
+  const stateView = new Contract(STATE_VIEW, [
+    'function getSlot0(bytes32) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)',
+  ], provider);
+
   for (let i = 0; i < checks.length; i += BATCH) {
     const batch = checks.slice(i, i + BATCH);
     const results = await Promise.allSettled(
       batch.map(c =>
         Promise.race([
-          provider.call({ to: STATE_VIEW, data: SLOT0_SIG + c.poolId.slice(2) }),
+          stateView.getSlot0.staticCall(c.poolId),
           new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), TIMEOUT_MS)),
-        ]).then(raw => {
-          try {
-            const [sqrtPriceX96] = AbiCoder.defaultAbiCoder().decode(['uint160', 'int24', 'uint24', 'uint24'], raw);
-            return sqrtPriceX96 > 0n ? { ...c, sqrtPriceX96: sqrtPriceX96.toString() } : null;
-          } catch { return null; }
-        }).catch(() => null))
+        ]).then(([sqrtPriceX96]) => sqrtPriceX96 > 0n ? { ...c, sqrtPriceX96: sqrtPriceX96.toString() } : null
+        ).catch(() => null))
     );
 
     for (const r of results) {
