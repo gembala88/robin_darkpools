@@ -7,9 +7,9 @@
 import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Contract, Wallet, parseEther, formatEther, formatUnits, AbiCoder } from 'ethers';
+import { Contract, Wallet, parseEther, formatEther, formatUnits, MaxUint256, AbiCoder } from 'ethers';
 import { makeProvider } from './provider.js';
-import { V3, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG } from './config.js';
+import { V3, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG, NATIVE } from './config.js';
 import { V3_NFPM_ABI, V4_NFPM_ABI, ERC20_ABI } from './abis.js';
 import { UC } from './config.js';
 
@@ -186,6 +186,98 @@ async function withdrawV4(provider, wallet, config) {
   console.log(`  Final CASHCAT balance: ${formatEther(finalBal)}`);
 }
 
+// ===== SWAP-BACK TOKENS TO ETH =====
+async function swapBackAfterWithdraw(provider, wallet, tokens, config) {
+  const doSwap = process.env.SWAP_BACK === '1';
+  if (!doSwap) {
+    console.log('\n=== Swap-back to ETH: SKIPPED (set SWAP_BACK=1 to enable) ===');
+    return;
+  }
+  console.log('\n=== Swap-back to ETH ===');
+
+  const WETH = LP_V3_CASHCAT_WETH.token1;
+  const SWAP_ROUTER = V3.swapRouter02;
+  const QUOTER = V3.quoterV2;
+  const addr = wallet?.address || (process.env.PRIVATE_KEY ? new Wallet(process.env.PRIVATE_KEY).address : NATIVE);
+  const failed = [];
+
+  for (const token of tokens) {
+    if (token.toLowerCase() === WETH.toLowerCase()) {
+      console.log(`  ${token.slice(0, 10)}: WETH, skip swap (will unwrap at end)`);
+      continue;
+    }
+    const t = new Contract(token, ERC20_ABI, provider);
+    const bal = await t.balanceOf(addr);
+    if (bal === 0n) {
+      console.log(`  ${token.slice(0, 10)}: balance 0, skip`);
+      continue;
+    }
+    // Try to quote token → WETH via V3 quoter (fee=10000 = 1%, same as CASHCAT/WETH pool)
+    const quoter = new Contract(QUOTER, [
+      'function quoteExactInputSingle((address,address,uint256,uint24,uint160)) returns (uint256,uint160,uint32,uint256)',
+    ], provider);
+    let amountOut;
+    try {
+      const result = await quoter.quoteExactInputSingle.staticCall([token, WETH, bal, 10000, 0]);
+      amountOut = result[0];
+    } catch (e) {
+      console.log(`  ${token.slice(0, 10)}: swap quote failed (no pool?), skip — ${e.shortMessage?.slice(0, 60) || e.message?.slice(0, 60)}`);
+      failed.push(token);
+      continue;
+    }
+    const amountOutMin = amountOut - (amountOut * BigInt(config.slippagePct)) / 100n;
+    console.log(`  ${token.slice(0, 10)} → WETH: ${formatEther(bal)} → ${formatEther(amountOut)} (min ${formatEther(amountOutMin)})`);
+
+    if (!wallet) continue; // DRY: skip the rest, next token
+
+    // Approve SwapRouter if needed
+    const tw = new Contract(token, ERC20_ABI, wallet);
+    const allowance = await tw.allowance(wallet.address, SWAP_ROUTER);
+    if (allowance < bal) {
+      console.log(`    Approving ${token.slice(0, 10)} for SwapRouter...`);
+      const appTx = await tw.approve(SWAP_ROUTER, MaxUint256);
+      await appTx.wait();
+      console.log(`    Approve tx: ${appTx.hash}`);
+    }
+
+    // Execute swap
+    const router = new Contract(SWAP_ROUTER, [
+      'function exactInputSingle((address,address,uint24,address,uint256,uint256,uint160)) payable returns (uint256)',
+    ], wallet);
+    try {
+      const params = [token, WETH, 10000, wallet.address, bal, amountOutMin, 0];
+      const pop = await router.exactInputSingle.populateTransaction(params);
+      const tx = await wallet.sendTransaction(pop);
+      console.log(`    Swap tx: ${tx.hash}`);
+      const rc = await tx.wait();
+      console.log(`    Status: ${rc.status === 1 ? 'OK' : 'FAIL'}`);
+    } catch (e) {
+      console.log(`    Swap FAILED: ${e.shortMessage || e.message}`);
+      failed.push(token);
+    }
+  }
+
+  // Unwrap WETH → ETH
+  const wethC = new Contract(WETH, [...ERC20_ABI, 'function withdraw(uint256)'], wallet || provider);
+  const wethBal = await wethC.balanceOf(addr);
+  console.log(`\n  WETH balance: ${formatEther(wethBal)}`);
+  if (wethBal > 0n && wallet) {
+    console.log('  Unwrapping WETH → ETH...');
+    const unwrapTx = await wethC.withdraw(wethBal);
+    await unwrapTx.wait();
+    console.log(`  Unwrap tx: ${unwrapTx.hash}`);
+    const ethBal = await provider.getBalance(wallet.address);
+    console.log(`  Final ETH balance: ${formatEther(ethBal)}`);
+  } else if (wethBal > 0n) {
+    console.log('  DRY: would unwrap WETH → ETH');
+  }
+
+  if (failed.length > 0) {
+    console.log(`\n  ⚠️ ${failed.length} token(s) swap failed: ${failed.map(t => t.slice(0, 10)).join(', ')}`);
+  }
+  console.log('  Swap-back complete.');
+}
+
 async function main() {
   const provider = await makeProvider('LP_RPC_URL');
   let wallet = null;
@@ -210,8 +302,10 @@ async function main() {
     const v3InState = state.positions.find(p => p.dex === 'V3');
     if (v3TokenId) {
       await withdrawV3(provider, wallet, BigInt(v3TokenId), config);
+      await swapBackAfterWithdraw(provider, wallet, [LP_V3_CASHCAT_WETH.token0, LP_V3_CASHCAT_WETH.token1], config);
     } else if (v3InState?.tokenId) {
       await withdrawV3(provider, wallet, BigInt(v3InState.tokenId), config);
+      await swapBackAfterWithdraw(provider, wallet, [LP_V3_CASHCAT_WETH.token0, LP_V3_CASHCAT_WETH.token1], config);
     } else {
       console.log('\nNo V3 position found. Use TOKEN_ID= env or run deposit first.');
       console.log('DRY-RUN: showing V3 withdraw plan:');
@@ -222,6 +316,8 @@ async function main() {
   // V4 withdraw
   if (config.enableV4CashcatUsdg) {
     await withdrawV4(provider, wallet, config);
+    const v4Key = LP_V4_CASHCAT_USDG.key;
+    await swapBackAfterWithdraw(provider, wallet, [v4Key.currency0, v4Key.currency1], config);
   }
 
   // Clean state on successful withdraw
