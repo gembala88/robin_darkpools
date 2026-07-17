@@ -117,9 +117,10 @@ async function getLogsChunked(provider, filter, from, to, step) {
         break;
       } catch (err) {
         const msg = (err.shortMessage || err.message || '').toLowerCase();
+        const body = (err.body || '').toLowerCase();
         const code = err.code;
         // Rate limit → exponential backoff
-        if (code === 429 || msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('rate')) {
+        if (code === 429 || msg.includes('429') || body.includes('429') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('rate')) {
           if (attempt >= 6) throw err;
           const delay = Math.min(1000 * Math.pow(2, attempt), CFG.maxRetryDelay);
           console.log(`  429 on blocks ${s}–${e} — backoff ${delay}ms (#${attempt + 1})`);
@@ -127,7 +128,7 @@ async function getLogsChunked(provider, filter, from, to, step) {
           continue;
         }
         // Block-range too large (e.g. Alchemy free tier max 10 blocks, HTTP 400)
-        if (code === -32600 || msg.includes('block range') || msg.includes('400') || msg.includes('bad response') || msg.includes('10 block') || msg.includes('free tier')) {
+        if (code === -32600 || msg.includes('block range') || body.includes('block range') || msg.includes('400') || body.includes('400') || msg.includes('bad response') || body.includes('bad response') || msg.includes('10 block') || body.includes('10 block') || msg.includes('free tier') || body.includes('free tier')) {
           const newStep = Math.max(Math.floor(cachedStep / 2), 10);
           console.log(`  range too large at blocks ${s}–${e} (${e-s+1}) — step ${cachedStep}→${newStep}`);
           if (cachedStep <= 10) throw err;
@@ -135,6 +136,11 @@ async function getLogsChunked(provider, filter, from, to, step) {
           // Re-process the current [s,e] range with smaller step
           out.push(...await getLogsChunked(provider, filter, s, e, cachedStep));
           break;
+        }
+        // Filter format error (not-supported / multi-address / multi-topic) → throw immediately, binary search won't help
+        if (msg.includes('not support') || body.includes('not support') || msg.includes('address array') || body.includes('address array') || msg.includes('multiple topics') || body.includes('multiple topics') || msg.includes('multiple addresses') || body.includes('multiple addresses')) {
+          console.error(`  filter format error on blocks ${s}–${e}: ${msg.slice(0, 120)}`);
+          throw err;
         }
         // Generic error → binary search (last resort)
         if (e > s) {
@@ -147,11 +153,6 @@ async function getLogsChunked(provider, filter, from, to, step) {
     }
   }
   return out;
-}
-
-async function getLogsChunkedMulti(provider, addresses, topics, from, to, step = 50_000) {
-  const filter = { address: addresses, topics };
-  return getLogsChunked(provider, filter, from, to, step);
 }
 
 async function loadKnownPoolTokens(provider) {
@@ -199,8 +200,12 @@ async function refreshCurveState(tokenAddr, factoryAddr, provider) {
         gradPct: pct, active: d.realEth < d.raiseTarget,
       };
     }
-    return null;
-  } catch { return null; }
+    return { noCurve: true };
+  } catch (e) {
+    const msg = (e.shortMessage || e.message || '').toLowerCase();
+    console.error(`  rpc error refreshing ${tokenAddr.slice(0,10)}: ${msg.slice(0, 100)}`);
+    return { rpcError: true };
+  }
 }
 
 function tokenLc(addr) { return addr.toLowerCase(); }
@@ -731,24 +736,26 @@ async function evaluateAndNotify(provider, blockNumber, isInitial = false) {
 // ===== REFRESH CURVE STATES =====
 
 async function refreshAllCurves(provider) {
-  let updated = 0;
+  let updated = 0, failed = 0, dead = 0;
   for (const info of Object.values(state.tokens)) {
     const cs = await refreshCurveState(info.token, info.factory, provider);
-    if (cs) {
-      info.lastGradPct = cs.gradPct;
-      info.lastActive = cs.active;
-      info.curveVirtualEth = cs.virtualEth.toString();
-      info.curveRealEth = cs.realEth.toString();
-      info.curveTokenReserve = cs.tokenReserve.toString();
-      info.curveRaiseTarget = cs.raiseTarget.toString();
-      info.curveLpEth = cs.lpEth.toString();
-      info.curveFeeBps = cs.feeBps;
-      updated++;
-    } else {
-      info.lastActive = false;
-    }
+    if (cs.rpcError) { failed++; continue; }       // RPC blip — keep previous lastActive
+    if (cs.noCurve) { info.lastActive = false; dead++; continue; } // genuinely dead
+    info.lastGradPct = cs.gradPct;
+    info.lastActive = cs.active;
+    info.curveVirtualEth = cs.virtualEth.toString();
+    info.curveRealEth = cs.realEth.toString();
+    info.curveTokenReserve = cs.tokenReserve.toString();
+    info.curveRaiseTarget = cs.raiseTarget.toString();
+    info.curveLpEth = cs.lpEth.toString();
+    info.curveFeeBps = cs.feeBps;
+    updated++;
   }
-  if (updated) console.log(`refreshed curves: ${updated} tokens`);
+  const parts = [];
+  if (updated) parts.push(`${updated} refreshed`);
+  if (dead) parts.push(`${dead} dead`);
+  if (failed) parts.push(`${failed} rpc err skipped`);
+  if (parts.length) console.log(`refreshed curves: ${parts.join(', ')}`);
 }
 
 // ===== MAIN =====
