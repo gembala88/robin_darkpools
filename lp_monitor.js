@@ -154,21 +154,32 @@ async function checkV4(provider, entry, config) {
 
   const stateView = new Contract(V4.stateView, [
     'function getSlot0(bytes32) view returns (uint160, int24, uint24, uint24)',
-    'function getLiquidity(bytes32) view returns (uint128)',
   ], provider);
   const poolId = computeV4PoolId(LP_V4_CASHCAT_USDG.key);
 
   let currentTick;
-  let poolLiq;
   try {
-    const [, tick, , ] = await stateView.getSlot0.staticCall(poolId);
+    const [, tick] = await stateView.getSlot0.staticCall(poolId);
     currentTick = Number(tick);
-    poolLiq = await stateView.getLiquidity.staticCall(poolId);
   } catch {
     return { error: 'V4 pool not initialized' };
   }
 
-  // Check if we have the stored tick bounds for IL calculation
+  // Check INDIVIDUAL position liquidity (bukan total pool liquidity)
+  const v4Reader = new Contract(V4_NFPM, [
+    'function getPositionLiquidity(uint256) view returns (uint128)',
+  ], provider);
+  let posLiq;
+  try {
+    posLiq = await v4Reader.getPositionLiquidity(BigInt(entry.tokenId));
+  } catch {
+    return { error: 'V4 position not found (getPositionLiquidity failed)' };
+  }
+  if (posLiq === 0n) {
+    return { error: 'position liquidity zero', dex: 'V4', tokenId: entry.tokenId };
+  }
+
+  // Legacy position tanpa entryTick — skip IL calc (tapi TETAP terhapus kalau liquidity=0)
   const hasILData = typeof entry.entryTick === 'number' && typeof entry.tickLower === 'number' && typeof entry.tickUpper === 'number';
   if (!hasILData) {
     return {
@@ -186,20 +197,9 @@ async function checkV4(provider, entry, config) {
   const threshold = Number(config.ilExitThresholdPct);
   const ilExceedsThreshold = ilPct < -threshold;
 
-  const v4Reader = new Contract(V4_NFPM, [
-    'function getPositionLiquidity(uint256) view returns (uint128)',
-  ], provider);
-  let posLiq;
-  try {
-    posLiq = await v4Reader.getPositionLiquidity(BigInt(entry.tokenId));
-  } catch {
-    return { error: 'V4 position not found (getPositionLiquidity failed)' };
-  }
-
   const sanity = sanityCheck(
     { liquidity: posLiq, tickLower: entry.tickLower, tickUpper: entry.tickUpper },
-    currentTick,
-    Number((1n << 96n).toString()) // dummy sqrtPriceX96 — we already checked pool is alive
+    currentTick, 1
   );
   if (sanity) return { error: `V4 ${sanity}` };
 
@@ -213,7 +213,7 @@ async function checkV4(provider, entry, config) {
     price,
     entryPrice,
     ilPct,
-    poolLiquidity: poolLiq.toString(),
+    posLiquidity: posLiq.toString(),
     outOfRange,
     ilExceedsThreshold,
     shouldNotify: ilExceedsThreshold || outOfRange,
@@ -304,7 +304,7 @@ async function monitorOnce(provider, config) {
       if (!result || result.error) {
         const isLegacy = result?.error?.includes('legacy');
         console.log(`  V4 #${entry.tokenId}: ${result?.error ?? 'null'}`);
-        if (result?.error?.includes('position burned') || result?.error?.includes('getPositionLiquidity failed')) {
+        if (result?.error?.includes('position burned') || result?.error?.includes('getPositionLiquidity failed') || result?.error?.includes('liquidity zero')) {
           toRemove.push(entry);
         } else if (!isLegacy) {
           anyFail = true;
@@ -314,7 +314,7 @@ async function monitorOnce(provider, config) {
 
       const rangePct = ((result.currentTick - result.tickLower) / (result.tickUpper - result.tickLower) * 100).toFixed(1);
       const statusIcon = result.outOfRange ? 'OUT' : 'IN';
-      console.log(`  V4 #${result.tokenId}: IL=${result.ilPct.toFixed(2)}% liq=${result.poolLiquidity.slice(0,8)} range=${rangePct}% [${statusIcon}]`);
+      console.log(`  V4 #${result.tokenId}: IL=${result.ilPct.toFixed(2)}% range=${rangePct}% [${statusIcon}]`);
 
       if (result.autoClosed || result.autoCloseFailed) {
         if (result.autoClosed) toRemove.push(entry);
