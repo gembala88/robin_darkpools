@@ -332,11 +332,66 @@ async function main() {
   process.on('unhandledRejection', (e) => console.log('unhandledRejection (ignored):', e?.shortMessage || e?.message || e));
   process.on('uncaughtException', (e) => console.log('uncaughtException (ignored):', e?.shortMessage || e?.message || e));
 
-  // event-driven: ONE subscription for all watched pools (topic1 = OR of poolIds)
+  // Replace event-driven subscriptions (provider.on → eth_newFilter — flaky on HTTP RPC,
+  // "filter not found" tanpa recovery) with manual getLogs polling, same proven pattern
+  // as lp_screener.js (chunking + Promise.race timeout).
   const swapTopic = topicId('Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)');
-  const watchedIds = [...new Set(markets.flatMap(m => m.pools.map(p => p.id)))];
-  try { provider.on({ address: V4.poolManager, topics: [swapTopic, watchedIds] }, () => tick('swap')); }
-  catch (e) { console.log('event sub failed, poll-only:', e?.message); }
+  const initTopic = topicId('Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)');
+  const knownPoolIds = new Set(markets.flatMap(m => m.pools.map(p => p.id.toLowerCase())));
+  let lastProcessedBlock = 0n;
+
+  async function pollLogs() {
+    try {
+      const head = await Promise.race([
+        provider.getBlockNumber(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('getBlockNumber timeout 10s')), 10000))
+      ]);
+      if (head <= Number(lastProcessedBlock)) return;
+      // On first run, scan last 100 blocks; otherwise scan from where we left off
+      const from = lastProcessedBlock === 0n ? BigInt(Math.max(0, head - 100)) : lastProcessedBlock + 1n;
+      const to = BigInt(head);
+      const CHUNK = 5000n;
+      let advanced = false, newPools = false;
+
+      for (let b = from; b <= to; b += CHUNK) {
+        const end = b + CHUNK - 1n > to ? to : b + CHUNK - 1n;
+        const nb = Number(b), ne = Number(end);
+
+        // Swap events — trigger re-quote for known pools
+        try {
+          const swapLogs = await Promise.race([
+            provider.getLogs({ address: V4.poolManager, topics: [swapTopic], fromBlock: nb, toBlock: ne }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('getLogs swap timeout 15s')), 15000))
+          ]);
+          for (const log of swapLogs) {
+            if (knownPoolIds.has(log.topics[1].toLowerCase())) tick('swap');
+          }
+          advanced = true;
+        } catch (e) {
+          console.log('    pollLogs swap chunk error (retry next tick):', e.shortMessage?.slice(0,80) || e.message?.slice(0,80));
+        }
+
+        // Initialize events — detect new pools
+        try {
+          const initLogs = await Promise.race([
+            provider.getLogs({ address: V4.poolManager, topics: [initTopic], fromBlock: nb, toBlock: ne }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('getLogs init timeout 15s')), 15000))
+          ]);
+          for (const log of initLogs) {
+            try { await onNewPool(log); } catch { /* ignore malformed */ }
+          }
+          if (initLogs.length > 0) newPools = true;
+        } catch (e) {
+          console.log('    pollLogs init chunk error (retry next tick):', e.shortMessage?.slice(0,80) || e.message?.slice(0,80));
+        }
+      }
+
+      if (advanced) lastProcessedBlock = BigInt(head);
+      if (newPools) persistWatchlist();
+    } catch (e) {
+      console.log('    pollLogs error:', e.shortMessage?.slice(0,100) || e.message?.slice(0,100));
+    }
+  }
 
   // persist current markets back to watchlist.json (survives restart)
   function persistWatchlist() {
@@ -349,33 +404,29 @@ async function main() {
   }
 
   // REAL-TIME: watch for NEW native-ETH V4 pools of active-curve tokens and add them live
-  const initTopic = topicId('Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)');
-  const knownPoolIds = new Set(watchedIds.map(x => x.toLowerCase()));
   async function onNewPool(log) {
-    try {
-      const poolId = log.topics[1];
-      if (knownPoolIds.has(poolId.toLowerCase())) return;
-      const c0 = getAddress('0x' + log.topics[2].slice(26));
-      if (BigInt(c0) !== 0n) return;                         // require native ETH currency0
-      const c1 = getAddress('0x' + log.topics[3].slice(26));
-      const [fee, tickSpacing, hooks] = coder.decode(['uint24', 'int24', 'address', 'uint160', 'int24'], log.data);
-      const cs = await curve.curves(c1).catch(() => null);   // token must be on an active, not-graduated curve
-      if (!cs || !(cs.raiseTarget > 0n && cs.realEth < cs.raiseTarget)) return;
-      const sym = await new Contract(c1, ['function symbol() view returns (string)'], provider).symbol().catch(() => '?');
-      const key = { currency0: c0, currency1: c1, fee: Number(fee), tickSpacing: Number(tickSpacing), hooks };
-      const pool = { name: (Number(fee) / 1e6 * 100) + '%', id: poolId, key };
-      let m = markets.find(x => x.token.toLowerCase() === c1.toLowerCase());
-      if (m) m.pools.push(pool); else { m = { token: c1, symbol: sym, pools: [pool] }; markets.push(m); }
-      knownPoolIds.add(poolId.toLowerCase());
-      provider.on({ address: V4.poolManager, topics: [swapTopic, poolId] }, () => tick('swap'));
-      persistWatchlist();
-      console.log(`NEW POOL: ${sym} @ ${pool.name} (${c1})`);
-      await tg(`🆕 <b>New token detected</b>: ${sym} @ ${pool.name} pool — now watching`);
-      tick('newpool');
-    } catch { /* ignore malformed logs */ }
+    const poolId = log.topics[1];
+    if (knownPoolIds.has(poolId.toLowerCase())) return;
+    const c0 = getAddress('0x' + log.topics[2].slice(26));
+    if (BigInt(c0) !== 0n) return;                         // require native ETH currency0
+    const c1 = getAddress('0x' + log.topics[3].slice(26));
+    const [fee, tickSpacing, hooks] = coder.decode(['uint24', 'int24', 'address', 'uint160', 'int24'], log.data);
+    const cs = await curve.curves(c1).catch(() => null);   // token must be on an active, not-graduated curve
+    if (!cs || !(cs.raiseTarget > 0n && cs.realEth < cs.raiseTarget)) return;
+    const sym = await new Contract(c1, ['function symbol() view returns (string)'], provider).symbol().catch(() => '?');
+    const key = { currency0: c0, currency1: c1, fee: Number(fee), tickSpacing: Number(tickSpacing), hooks };
+    const pool = { name: (Number(fee) / 1e6 * 100) + '%', id: poolId, key };
+    let m = markets.find(x => x.token.toLowerCase() === c1.toLowerCase());
+    if (m) m.pools.push(pool); else { m = { token: c1, symbol: sym, pools: [pool] }; markets.push(m); }
+    knownPoolIds.add(poolId.toLowerCase());
+    persistWatchlist();
+    console.log(`NEW POOL: ${sym} @ ${pool.name} (${c1})`);
+    await tg(`🆕 <b>New token detected</b>: ${sym} @ ${pool.name} pool — now watching`);
+    tick('newpool');
   }
-  try { provider.on({ address: V4.poolManager, topics: [initTopic] }, (log) => onNewPool(log)); }
-  catch (e) { console.log('init sub failed:', e?.message); }
+
+  // Start log polling (replaces provider.on subscriptions)
+  setInterval(pollLogs, Number(process.env.EVENT_POLL_MS || 6000));
 
   const mode = `${CFG.live ? 'LIVE' : 'DRY-RUN'}/${executor ? 'ATOMIC' : 'EOA'}`;
   console.log('telegram:', tgEnabled ? 'ON' : 'off');
