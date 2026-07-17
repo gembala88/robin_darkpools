@@ -5,6 +5,7 @@ import { UC } from './config.js';
 import { tgScreener } from './telegram.js';
 import { checkGMGN } from './gmgn.js';
 import { makeProvider } from './provider.js';
+import { autoOpenDryRun, checkAutoOpenConditions, enrichPoolData } from './lp_auto_open.js';
 
 const DEXSCREENER_PROFILES = 'https://api.dexscreener.com/token-profiles/latest/v1';
 const DEXSCREENER_BOOSTS = 'https://api.dexscreener.com/token-boosts/latest/v1';
@@ -874,6 +875,18 @@ async function evaluatePools() {
     if (!po.notified && po.score >= minScore) {
       await sendCandidateNotification(po);
       notified++;
+    }
+
+    // Auto-open dry-run (Phase 1):
+    // All 5 gates must pass: score >= 60, HHI done & < 2500, GMGN done & clean,
+    // TVL >= $100k, governance OK
+    if (po.score >= 60 && po.hhiData?.hhi !== undefined && po.hhiData.hhi < 2500 &&
+        po.gmgnChecked && (!po.gmgnFlags || po.gmgnFlags.length === 0) &&
+        po.tvlUsd >= 100000) {
+      const ao = await checkAutoOpenConditions(po);
+      if (ao.pass) {
+        await autoOpenDryRun(po);
+      }
     }
     scored++;
   }
