@@ -90,7 +90,7 @@ class PinnedProvider extends JsonRpcProvider {
 
 class FallbackProvider extends JsonRpcProvider {
   constructor(primary, fallback) {
-    super('http://127.0.0.1:1', undefined, { staticNetwork: true });
+    super('http://127.0.0.1:1', undefined, { staticNetwork: true, batchMaxCount: 1 });
     this._pri = primary;
     this._sec = fallback;
     this._mode = 'primary';
