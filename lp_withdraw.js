@@ -102,19 +102,22 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
 }
 
 // ===== V4 WITHDRAW =====
-async function withdrawV4(provider, wallet, config) {
+// tokenId optional: if null, looks up from state or V4_TOKEN_ID env.
+export async function withdrawV4(provider, wallet, config, tokenId = null) {
   console.log(`\n=== V4 Withdraw (CASHCAT/USDG) ===`);
   if (!config.enableV4CashcatUsdg) { console.log('  SKIPPED (disabled)'); return; }
 
-  const state = loadState();
-  const v4Pos = state.positions.find(p => p.dex === 'V4');
-  if (!v4Pos && !process.env.V4_TOKEN_ID) {
-    console.log('  No V4 position in state and no V4_TOKEN_ID env. Skipping.');
-    return;
+  if (tokenId === null) {
+    const state = loadState();
+    const v4Pos = state.positions.find(p => p.dex === 'V4');
+    if (!v4Pos && !process.env.V4_TOKEN_ID) {
+      console.log('  No V4 position in state and no V4_TOKEN_ID env. Skipping.');
+      return;
+    }
+    tokenId = BigInt(process.env.V4_TOKEN_ID || v4Pos.tokenId || 0);
+  } else {
+    tokenId = BigInt(tokenId);
   }
-
-  const nfpm = new Contract(V4_NFPM, V4_NFPM_ABI, wallet || provider);
-  const tokenId = BigInt(process.env.V4_TOKEN_ID || v4Pos.tokenId || 0);
   const poolKey = LP_V4_CASHCAT_USDG.key;
 
   // Use getPositionLiquidity(uint256) — positions(uint256) dari V3 TIDAK ADA di V4
@@ -321,7 +324,8 @@ async function main() {
 
   // V4 withdraw
   if (config.enableV4CashcatUsdg) {
-    await withdrawV4(provider, wallet, config);
+    const v4TokenId = process.env.V4_TOKEN_ID || null;
+    await withdrawV4(provider, wallet, config, v4TokenId);
     const v4Key = LP_V4_CASHCAT_USDG.key;
     await swapBackAfterWithdraw(provider, wallet, [v4Key.currency0, v4Key.currency1], config);
   }

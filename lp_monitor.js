@@ -6,7 +6,7 @@ import { V3, V4, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG } from './confi
 import { V3_NFPM_ABI, ERC20_ABI } from './abis.js';
 import { UC } from './config.js';
 import { tg } from './telegram.js';
-import { withdrawV3 } from './lp_withdraw.js';
+import { withdrawV3, withdrawV4 } from './lp_withdraw.js';
 
 const abi = AbiCoder.defaultAbiCoder();
 const STATE_FILE = new URL('./lp_state.json', import.meta.url);
@@ -154,21 +154,101 @@ async function checkV4(provider, entry, config) {
 
   const stateView = new Contract(V4.stateView, [
     'function getSlot0(bytes32) view returns (uint160, int24, uint24, uint24)',
+    'function getLiquidity(bytes32) view returns (uint128)',
   ], provider);
   const poolId = computeV4PoolId(LP_V4_CASHCAT_USDG.key);
 
   let currentTick;
+  let poolLiq;
   try {
-    const [, tick] = await stateView.getSlot0.staticCall(poolId);
+    const [, tick, , ] = await stateView.getSlot0.staticCall(poolId);
     currentTick = Number(tick);
+    poolLiq = await stateView.getLiquidity.staticCall(poolId);
   } catch {
     return { error: 'V4 pool not initialized' };
   }
 
-  return {
-    dex: 'V4', pool: LP_V4_CASHCAT_USDG.symbol, currentTick, price: tickToPrice(currentTick),
-    note: 'V4 monitoring limited (no positions() equivalent confirmed yet)',
+  // Check if we have the stored tick bounds for IL calculation
+  const hasILData = typeof entry.entryTick === 'number' && typeof entry.tickLower === 'number' && typeof entry.tickUpper === 'number';
+  if (!hasILData) {
+    return {
+      error: 'V4 legacy position (no entryTick/tickBounds) — skip IL calc',
+      dex: 'V4', pool: LP_V4_CASHCAT_USDG.symbol, tokenId: entry.tokenId,
+      currentTick, price: tickToPrice(currentTick),
+    };
+  }
+
+  const price = tickToPrice(currentTick);
+  const entryPrice = tickToPrice(entry.entryTick);
+
+  const ilPct = ilConcentrated(entryPrice, price, entry.tickLower, entry.tickUpper) * 100;
+  const outOfRange = currentTick < entry.tickLower || currentTick > entry.tickUpper;
+  const threshold = Number(config.ilExitThresholdPct);
+  const ilExceedsThreshold = ilPct < -threshold;
+
+  const v4Reader = new Contract(V4_NFPM, [
+    'function getPositionLiquidity(uint256) view returns (uint128)',
+  ], provider);
+  let posLiq;
+  try {
+    posLiq = await v4Reader.getPositionLiquidity(BigInt(entry.tokenId));
+  } catch {
+    return { error: 'V4 position not found (getPositionLiquidity failed)' };
+  }
+
+  const sanity = sanityCheck(
+    { liquidity: posLiq, tickLower: entry.tickLower, tickUpper: entry.tickUpper },
+    currentTick,
+    Number((1n << 96n).toString()) // dummy sqrtPriceX96 — we already checked pool is alive
+  );
+  if (sanity) return { error: `V4 ${sanity}` };
+
+  const result = {
+    dex: 'V4',
+    pool: LP_V4_CASHCAT_USDG.symbol,
+    tokenId: entry.tokenId,
+    currentTick,
+    tickLower: entry.tickLower,
+    tickUpper: entry.tickUpper,
+    price,
+    entryPrice,
+    ilPct,
+    poolLiquidity: poolLiq.toString(),
+    outOfRange,
+    ilExceedsThreshold,
+    shouldNotify: ilExceedsThreshold || outOfRange,
   };
+
+  // AUTO-CLOSE: trigger if IL exceeds threshold + position has liquidity, or FORCE_TRIGGER=1
+  const shouldTrigger = (ilExceedsThreshold && posLiq > 0n) || FORCE_TRIGGER;
+  if (shouldTrigger) {
+    const reason = FORCE_TRIGGER ? 'FORCE_TRIGGER=1' : `IL=${ilPct.toFixed(2)}% < -${threshold}%`;
+    console.log(`>>> ${AUTO_CLOSE_DRY ? 'AKAN auto-close' : 'AUTO-CLOSING'} V4 #${entry.tokenId} (${reason})`);
+
+    if (AUTO_CLOSE_DRY) {
+      await tg(`\u{1F514} LP Monitor — AUTO-CLOSE DRY (V4)\n` +
+        `Position #${entry.tokenId} (${result.pool})\n` +
+        `Trigger: ${reason}\n` +
+        `AKAN di-close otomatis jika AUTO_CLOSE_DRY=0`).catch(() => {});
+    } else if (LIVE) {
+      const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
+      await tg(`\u{1F534} AUTO-CLOSING V4 position #${entry.tokenId}\nIL: ${ilPct.toFixed(2)}%`).catch(() => {});
+      try {
+        await withdrawV4(provider, wallet, config, entry.tokenId);
+        result.autoClosed = true;
+        await tg(`\u{2705} AUTO-CLOSED V4 #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
+          `Lihat wallet untuk hasil withdraw.`).catch(() => {});
+      } catch (e) {
+        const errMsg = e.shortMessage || e.message || String(e);
+        result.autoCloseFailed = errMsg;
+        await tg(`\u{274C} AUTO-CLOSE FAILED V4 #${entry.tokenId}: ${errMsg.slice(0,120)}`).catch(() => {});
+      }
+    } else {
+      console.log('    (skip: not live, set DRY=0 PRIVATE_KEY=0x.. to auto-close)');
+    }
+  }
+
+  return result;
 }
 
 async function monitorOnce(provider, config) {
@@ -221,10 +301,32 @@ async function monitorOnce(provider, config) {
       }
     } else if (entry.dex === 'V4') {
       const result = await checkV4(provider, entry, config);
-      if (result?.error) {
-        console.log(`  V4: ${result.error}`);
-      } else {
-        console.log(`  V4: tick=${result.currentTick} price=${result.price.toFixed(8)} USDG/CASHCAT`);
+      if (!result || result.error) {
+        const isLegacy = result?.error?.includes('legacy');
+        console.log(`  V4 #${entry.tokenId}: ${result?.error ?? 'null'}`);
+        if (result?.error?.includes('position burned') || result?.error?.includes('getPositionLiquidity failed')) {
+          toRemove.push(entry);
+        } else if (!isLegacy) {
+          anyFail = true;
+        }
+        continue;
+      }
+
+      const rangePct = ((result.currentTick - result.tickLower) / (result.tickUpper - result.tickLower) * 100).toFixed(1);
+      const statusIcon = result.outOfRange ? 'OUT' : 'IN';
+      console.log(`  V4 #${result.tokenId}: IL=${result.ilPct.toFixed(2)}% liq=${result.poolLiquidity.slice(0,8)} range=${rangePct}% [${statusIcon}]`);
+
+      if (result.autoClosed || result.autoCloseFailed) {
+        if (result.autoClosed) toRemove.push(entry);
+      } else if (result.shouldNotify) {
+        const parts = [
+          `\u{1F514} LP Monitor: ${result.pool} #${result.tokenId}`,
+          `IL: ${result.ilPct.toFixed(2)}% (threshold: -${config.ilExitThresholdPct}%)`,
+          `Entry: ${result.entryPrice.toFixed(8)} | Now: ${result.price.toFixed(8)}`,
+        ];
+        if (result.outOfRange) parts.push(`\u{26A0}\u{FE0F} OUT OF RANGE`);
+        if (result.ilExceedsThreshold) parts.push(`\u{26A0}\u{FE0F} IL exceeds threshold`);
+        await tg(parts.join('\n')).catch(() => {});
       }
     }
   }

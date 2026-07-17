@@ -354,7 +354,7 @@ async function depositV4(provider, wallet, config) {
 
   if (!wallet) {
     console.log('  DRY-RUN: no wallet, skipping mint.');
-    return { key: poolKey, tickLower, tickUpper, liquidity: liquidity.toString(), actions: Array.from(actions) };
+    return { key: poolKey, tickLower, tickUpper, entryTick: currentTick, liquidity: liquidity.toString(), actions: Array.from(actions) };
   }
 
   const nfpm = new Contract(V4_NFPM, V4_NFPM_ABI, wallet);
@@ -425,7 +425,7 @@ async function depositV4(provider, wallet, config) {
     }
     console.log(`  Token ID: ${tokenId}`);
 
-    const position = { dex: 'V4', pool: LP_V4_CASHCAT_USDG.symbol, tokenId, block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
+    const position = { dex: 'V4', pool: LP_V4_CASHCAT_USDG.symbol, tokenId, entryTick: currentTick, tickLower, tickUpper, block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
     const state = loadState();
     state.positions.push(position);
     saveState(state);
