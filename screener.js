@@ -456,6 +456,20 @@ async function sendPeriodicSummary() {
 
 // ===== NOTIFY CANDIDATE =====
 async function notifyCandidate(info, metrics) {
+  const hhiNote = metrics.topBuyerPct > 50 ? ' ⚠️ HIGH' : '';
+  const riskFlag = info.gmgnChecked
+    ? (info.gmgnFlaggedRisk ? '⚠️ FLAGGED (security risk detected)' : '✅ clean')
+    : 'not checked yet';
+  // Check if token already has a V4 pool from scan output
+  let poolExists = false;
+  try {
+    const poolData = JSON.parse(fs.readFileSync('./curve_v4_pools.json', 'utf8'));
+    const tokKey = info.token.toLowerCase();
+    poolExists = (poolData.tokens || []).some(t => t.token.toLowerCase() === tokKey);
+  } catch {}
+  const poolLine = poolExists
+    ? `✅ V4 pool AKTIF — cek lp_screener untuk skor LP`
+    : `<i>Pool V4 belum terdeteksi. Jalankan scan_v4_pools.mjs atau tunggu pollLogs arb.js</i>`;
   const msg = [
     `🏆 <b>Pool candidate</b> — ${info.symbol} (<code>${info.token.slice(0,10)}&hellip;</code>)`,
     `<code>${info.token}</code>`,
@@ -464,12 +478,15 @@ async function notifyCandidate(info, metrics) {
     `⏱ age: ${metrics.ageHours.toFixed(1)}h (≥ ${CFG.minAgeHours}h)`,
     `👥 buyers: ${metrics.buyerCount} (≥ ${CFG.minUniqueBuyers})`,
     `💰 volume 1h: ${metrics.volume1hEth.toFixed(4)} ETH (≥ ${CFG.minVolumeEth} ETH)`,
+    `📊 buyer concentration: ${metrics.topBuyerPct.toFixed(1)}%${hhiNote}`,
+    `🔄 buy/sell ratio: ${metrics.sellBuyRatio.toFixed(3)}`,
+    `🛡 GMGN: ${riskFlag}`,
     `🏅 score: ${metrics.compositeScore}/100`,
     ``,
-    `<i>Run poolmaker to create V4 pool at curve price</i>`,
+    poolLine,
   ].join('\n');
   await tgScreener(msg);
-  console.log(`>>> CANDIDATE: ${info.symbol} (${info.token}) — grad=${metrics.grad}% age=${metrics.ageHours}h buyers=${metrics.buyerCount} vol=${metrics.volume1hEth} ETH score=${metrics.compositeScore}`);
+  console.log(`>>> CANDIDATE: ${info.symbol} (${info.token}) — grad=${metrics.grad}% age=${metrics.ageHours}h buyers=${metrics.buyerCount} vol=${metrics.volume1hEth} ETH score=${metrics.compositeScore} hhi=${metrics.topBuyerPct}% sellRatio=${metrics.sellBuyRatio.toFixed(3)} gmgn=${info.gmgnFlaggedRisk ? 'FLAGGED' : 'ok'}`);
 }
 
 // ===== STATE PERSISTENCE =====
