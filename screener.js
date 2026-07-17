@@ -106,7 +106,7 @@ function decodeFeeEvent(log) {
 }
 
 async function getLogsChunked(provider, filter, from, to, step) {
-  if (!step) step = 200_000;
+  if (!step) step = 50_000;
   const out = [];
   for (let s = from; s <= to; s += step) {
     const e = Math.min(s + step - 1, to);
@@ -126,13 +126,13 @@ async function getLogsChunked(provider, filter, from, to, step) {
           await sleep(delay + Math.random() * 500);
           continue;
         }
-        // Block-range too large (e.g. Alchemy free tier max 10 blocks)
-        if (code === -32600 || msg.includes('block range') || msg.includes('10 block') || msg.includes('free tier')) {
+        // Block-range too large (e.g. Alchemy free tier max 10 blocks, HTTP 400)
+        if (code === -32600 || msg.includes('block range') || msg.includes('400') || msg.includes('bad response') || msg.includes('10 block') || msg.includes('free tier')) {
           const newStep = Math.max(Math.floor(cachedStep / 2), 10);
           console.log(`  range too large at blocks ${s}–${e} (${e-s+1}) — step ${cachedStep}→${newStep}`);
-          if (cachedStep <= 10) throw err; // can't go smaller
+          if (cachedStep <= 10) throw err;
           cachedStep = newStep;
-          // Re-process the current [s,e] range with smaller step, then break
+          // Re-process the current [s,e] range with smaller step
           out.push(...await getLogsChunked(provider, filter, s, e, cachedStep));
           break;
         }
@@ -149,7 +149,7 @@ async function getLogsChunked(provider, filter, from, to, step) {
   return out;
 }
 
-async function getLogsChunkedMulti(provider, addresses, topics, from, to, step = 500_000) {
+async function getLogsChunkedMulti(provider, addresses, topics, from, to, step = 50_000) {
   const filter = { address: addresses, topics };
   return getLogsChunked(provider, filter, from, to, step);
 }
