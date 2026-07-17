@@ -33,7 +33,7 @@ async function checkPool(stateView, poolId) {
 }
 
 async function main() {
-  const provider = await makeProvider();
+  const provider = await makeProvider('ARB_RPC_URL');
   const raw = fs.readFileSync('screener_state.json', 'utf8');
   const state = JSON.parse(raw);
   const tokens = Object.values(state.tokens || {}).filter(t => t.active);
