@@ -17,6 +17,17 @@ const STATE_FILE = new URL('./lp_state.json', import.meta.url);
 const CASHCAT = LP_V3_CASHCAT_WETH.token0;
 const WETH = LP_V3_CASHCAT_WETH.token1;
 const USDG = LP_V4_CASHCAT_USDG.key.currency1;
+const MAX_ACTIVE_POSITIONS = Number(process.env.MAX_LP_POSITIONS || 3);
+
+// Tokens considered "shared base" (not unique to a pair)
+const STABLE_OR_WRAPPED = new Set([WETH.toLowerCase(), USDG.toLowerCase()]);
+
+// Extract the unique (non-stable) token address from a saved position
+function positionUniqueToken(pos) {
+  if (pos.dex === 'V3' && pos.pool === LP_V3_CASHCAT_WETH.symbol) return LP_V3_CASHCAT_WETH.token0;
+  if (pos.dex === 'V4' && pos.pool === LP_V4_CASHCAT_USDG.symbol) return LP_V4_CASHCAT_USDG.key.currency0;
+  return null;
+}
 
 const ERROR_MAP = {
   '0x25fbd8be': 'AlreadySubscribed(uint256,address)',
@@ -444,6 +455,52 @@ async function depositV4(provider, wallet, config) {
   }
 }
 
+// ===== GOVERNANCE PRE-CHECK =====
+// Validates deposit eligibility BEFORE any swap/tx:
+//   1. MAX POSITIONS: cannot exceed MAX_ACTIVE_POSITIONS
+//   2. TOKEN DEDUP: same base token cannot be in multiple positions
+//   3. OVERRIDE: FORCE_OPEN=1 skips all checks
+async function checkGovernance(config) {
+  const forceOpen = process.env.FORCE_OPEN === '1';
+  if (forceOpen) {
+    console.log('  FORCE_OPEN=1 — melewati semua governance check.');
+    return;
+  }
+
+  const state = loadState();
+  const existing = state.positions || [];
+  const activeCount = existing.length;
+
+  console.log(`\n=== Governance Pre-Check ===`);
+  console.log(`  Posisi aktif di state: ${activeCount}`);
+  console.log(`  Batas maksimal: ${MAX_ACTIVE_POSITIONS}`);
+
+  if (activeCount >= MAX_ACTIVE_POSITIONS) {
+    console.log(`  ❌ BLOKIR: ${activeCount} posisi (batas: ${MAX_ACTIVE_POSITIONS}).`);
+    console.log(`  Tutup salah satu dulu, atau set FORCE_OPEN=1 untuk override manual.`);
+    process.exit(0);
+  }
+
+  // Proposed unique tokens from enabled config
+  const proposedSet = new Set();
+  if (config.enableV3CashcatWeth) proposedSet.add(LP_V3_CASHCAT_WETH.token0.toLowerCase());
+  if (config.enableV4CashcatUsdg) proposedSet.add(LP_V4_CASHCAT_USDG.key.currency0.toLowerCase());
+
+  for (const pos of existing) {
+    if (pos.dex !== 'V3' && pos.dex !== 'V4') continue;
+    const ut = positionUniqueToken(pos);
+    if (!ut) continue;
+    if (proposedSet.has(ut.toLowerCase())) {
+      console.log(`  ❌ BLOKIR: token ${ut.slice(0,10)}... sudah dipakai di posisi #${pos.tokenId} (${pos.pool || pos.dex}).`);
+      console.log(`  Prinsip: 1 pair terbaik per token, jangan dobel.`);
+      console.log(`  Set FORCE_OPEN=1 untuk override manual.`);
+      process.exit(0);
+    }
+  }
+
+  console.log(`  ✅ Governance check passed.`);
+}
+
 async function main() {
   const provider = await makeProvider('LP_RPC_URL');
   let wallet = null;
@@ -464,6 +521,9 @@ async function main() {
   console.log(`  Order: V4 → V3 (V4 first, V3 pakai sisa CASHCAT)`);
   console.log(`  Range: ±${config.rangeSymmetricPct}% (symmetric)`);
   console.log(`  Slippage: ${config.slippagePct}%`);
+
+  // Governance pre-check: blokir sebelum swap ETH terjadi
+  await checkGovernance(config);
 
   const resultV3 = wallet ? null : { token0: CASHCAT, token1: WETH, fee: 10000 };
   const resultV4 = wallet ? null : { key: LP_V4_CASHCAT_USDG.key };
