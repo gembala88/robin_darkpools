@@ -582,10 +582,12 @@ async function processEvents(provider, logs, blockNumber) {
 
 async function scanRange(provider, fromBlock, toBlock) {
   if (fromBlock > toBlock) return 0;
-  const allLogs = await getLogsChunkedMulti(provider,
-    Object.values(FACTORIES),
-    ALL_TOPICS,
-    fromBlock, toBlock);
+  const allLogs = [];
+  // Scan each factory sequentially — multi-address filter causes HTTP 400 on Alchemy
+  for (const [name, addr] of Object.entries(FACTORIES)) {
+    const logs = await getLogsChunked(provider, { address: addr, topics: ALL_TOPICS }, fromBlock, toBlock);
+    allLogs.push(...logs);
+  }
   if (!allLogs.length) return 0;
 
   let buyCount = 0, sellCount = 0, feeCount = 0;
