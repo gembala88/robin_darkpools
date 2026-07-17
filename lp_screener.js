@@ -391,7 +391,10 @@ const TRANSFER_SIG = topicId('Transfer(address,address,uint256)');
 
 let _hhiProvider = null;
 function getHHIProvider() {
-  if (!_hhiProvider) _hhiProvider = makeProvider('SCREENER_RPC_URL');
+  if (!_hhiProvider) {
+    const envKey = process.env.LP_SCREENER_RPC_URL ? 'LP_SCREENER_RPC_URL' : 'LP_RPC_URL';
+    _hhiProvider = makeProvider(envKey);
+  }
   return _hhiProvider;
 }
 
