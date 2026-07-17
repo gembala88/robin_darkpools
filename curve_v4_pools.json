@@ -1,9 +1,13 @@
 {
-  "scannedAt": 1784255669835,
+  "scannedAt": 1784256136403,
+  "elapsed": "0",
   "totalTokens": 2,
   "totalChecked": 4,
   "activeTokens": 2,
   "activePools": 3,
+  "confirmedEmpty": 1,
+  "failedChecks": [],
+  "retryPasses": 0,
   "tokens": [
     {
       "token": "0x020bfC650A365f8BB26819deAAbF3E21291018b4",
