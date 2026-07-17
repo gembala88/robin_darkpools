@@ -105,6 +105,18 @@ async function main() {
   }
 
   const markets = loadMarkets();
+
+  // Load screener_state.json (curve token cache) — reduces on-chain curve calls
+  let screenerCurveTokens = new Map(); // tokenLc -> {active, realEth, raiseTarget}
+  try {
+    const raw = fs.readFileSync(new URL('./screener_state.json', import.meta.url), 'utf8');
+    const st = JSON.parse(raw);
+    for (const [addr, t] of Object.entries(st.tokens || {})) {
+      if (t.active) screenerCurveTokens.set(addr.toLowerCase(), t);
+    }
+    console.log(`screener_state.json: ${screenerCurveTokens.size} active curve tokens loaded`);
+  } catch { console.log('screener_state.json: not found, using on-chain curve checks only'); }
+
   const curve = new Contract(CURVE.address, CURVE_ABI, runner);
   const quoter = new Contract(V4.quoter, QUOTER_ABI, provider);
   const permit2 = new Contract(V4.permit2, PERMIT2_ABI, execWallet || runner);
@@ -116,7 +128,7 @@ async function main() {
   const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas ?? 100000000n;
   let gasCost = gasPrice * CFG.gasUnits;
 
-  console.log(`\nRobinFun<->UniV4 arb | ${CFG.live ? 'LIVE' : 'DRY-RUN'} | ${executor ? 'ATOMIC' : 'EOA'} | ${CFG.watchlist ? 'WATCHLIST' : 'single'}`);
+  console.log(`\nRobinFun<->UniV4 arb | ${CFG.live ? 'LIVE' : 'DRY-RUN'} | ${executor ? 'ATOMIC' : 'EOA'} | ${CFG.watchlist ? 'WATCHLIST' : 'config'} | ${screenerCurveTokens.size} curve tokens cached`);
   if (!CFG.executor && !CFG.eoaFallback) {
     console.error('FATAL: EOA fallback disabled (eoaFallbackEnabled=false) and no EXECUTOR_ADDR set.');
     process.exit(1);
@@ -411,17 +423,35 @@ async function main() {
     if (BigInt(c0) !== 0n) return;                         // require native ETH currency0
     const c1 = getAddress('0x' + log.topics[3].slice(26));
     const [fee, tickSpacing, hooks] = coder.decode(['uint24', 'int24', 'address', 'uint160', 'int24'], log.data);
-    const cs = await curve.curves(c1).catch(() => null);   // token must be on an active, not-graduated curve
-    if (!cs || !(cs.raiseTarget > 0n && cs.realEth < cs.raiseTarget)) return;
-    const sym = await new Contract(c1, ['function symbol() view returns (string)'], provider).symbol().catch(() => '?');
+
+    // Check if token has active curve — first from screener_state cache, fallback on-chain
+    let hasCurve = false, sym = '?';
+    const cached = screenerCurveTokens.get(c1.toLowerCase());
+    if (cached) {
+      hasCurve = true;
+      sym = cached.symbol || '?';
+    } else {
+      const cs = await curve.curves(c1).catch(() => null);
+      hasCurve = !!(cs && cs.raiseTarget > 0n && cs.realEth < cs.raiseTarget);
+      if (!hasCurve) return;
+      sym = await new Contract(c1, ['function symbol() view returns (string)'], provider).symbol().catch(() => '?');
+    }
+
     const key = { currency0: c0, currency1: c1, fee: Number(fee), tickSpacing: Number(tickSpacing), hooks };
     const pool = { name: (Number(fee) / 1e6 * 100) + '%', id: poolId, key };
     let m = markets.find(x => x.token.toLowerCase() === c1.toLowerCase());
-    if (m) m.pools.push(pool); else { m = { token: c1, symbol: sym, pools: [pool] }; markets.push(m); }
+    if (m) {
+      if (m.pools.find(p => p.id.toLowerCase() === poolId.toLowerCase())) return; // already have this pool
+      m.pools.push(pool);
+      console.log(`NEW POOL: ${sym} — added ${pool.name} (${c1.slice(0,10)}…)`);
+    } else {
+      m = { token: c1, symbol: sym, pools: [pool] };
+      markets.push(m);
+      console.log(`NEW TOKEN: ${sym} (${c1.slice(0,10)}…) — curve + V4 pool detected, added to arb watchlist`);
+      await tg(`🆕 <b>New token detected</b>: ${sym} @ ${pool.name} pool — now watching`);
+    }
     knownPoolIds.add(poolId.toLowerCase());
     persistWatchlist();
-    console.log(`NEW POOL: ${sym} @ ${pool.name} (${c1})`);
-    await tg(`🆕 <b>New token detected</b>: ${sym} @ ${pool.name} pool — now watching`);
     tick('newpool');
   }
 
