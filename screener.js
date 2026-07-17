@@ -739,7 +739,10 @@ async function evaluateAndNotify(provider, blockNumber, isInitial = false) {
 async function refreshAllCurves(provider) {
   let updated = 0, failed = 0, dead = 0;
   const failByFactory = {};
-  for (const info of Object.values(state.tokens)) {
+  const entries = Object.values(state.tokens);
+  for (let i = 0; i < entries.length; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 100));
+    const info = entries[i];
     const cs = await refreshCurveState(info.token, info.factory, provider);
     if (cs.rpcError) {
       failed++;
