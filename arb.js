@@ -22,7 +22,7 @@ import { Contract, Wallet, JsonRpcProvider, Network, parseEther, formatEther, Ma
 import { makeProvider } from './provider.js';
 import { CURVE_ABI, ERC20_ABI, PERMIT2_ABI, UNIVERSAL_ROUTER_ABI, QUOTER_ABI, buildV4Swap } from './abis.js';
 import { CURVE, V4, TOKEN, POOLS, UC } from './config.js';
-import { notifyStartup, notifyBuy, notifySell, notifyAtomic, notifyError, parseSwap, tg, tgEnabled } from './telegram.js';
+import { notifyStartup, notifyBuy, notifySell, notifyAtomic, notifyTrade, notifyExecFail, notifyError, parseSwap, tg, tgEnabled } from './telegram.js';
 
 const EXECUTOR_ABI = [
   'function curveToV4(address token,uint256 ethIn,uint256 minTokensOut,(address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) key,uint128 minEthOut,uint256 minProfit)',
@@ -237,7 +237,7 @@ async function main() {
       const rc = await (await call).wait();
       console.log('  tx', rc.hash);
       // fire-and-forget so a notif hiccup can never block/crash the trade loop
-      notifyAtomic({ symbol: b.market.symbol, token: b.market.token, dir: b.dir, buyVenue: b.dir === 'A' ? 'curve' : `V4 ${b.pool.name}`, sellVenue: b.dir === 'A' ? `V4 ${b.pool.name}` : 'curve', sizeEth: b.size, receipt: rc, netEth: 0n }).catch(() => {});
+      notifyAtomic({ symbol: b.market.symbol, token: b.market.token, dir: b.dir, buyVenue: b.dir === 'A' ? 'curve' : `V4 ${b.pool.name}`, sellVenue: b.dir === 'A' ? `V4 ${b.pool.name}` : 'curve', sizeEth: b.size, receipt: rc, netEth: b.net }).catch(() => {});
       return;
     }
     await ensureEOA(token);
@@ -252,7 +252,7 @@ async function main() {
     console.log(`  [A] buy curve ${b.market.symbol} (${b.market.token.slice(0,8)}…) ${formatEther(b.size)} ETH`);
     const buyRc = await (await curve.buy(token, bpsDown(q, CFG.slippageBps), { value: b.size })).wait();
     const got = (await t.balanceOf(wallet.address)) - before;
-    await notifyBuy({ symbol: b.market.symbol, token: b.market.token, venue: 'curve', ethIn: b.size, tokens: got, hash: buyRc.hash });
+    await notifyBuy({ symbol: b.market.symbol, token: b.market.token, venue: 'curve', ethIn: b.size, tokens: got, hash: buyRc.hash }).catch(() => {});
     const target = b.size + gasCost + (b.size * CFG.minProfitBps) / 10000n;
     try {
       const sw = buildV4Swap({ zeroForOne: false, amountIn: got, amountOutMin: target, deadline: deadline(), key: b.pool.key });
@@ -260,13 +260,16 @@ async function main() {
       const sellRc = await (await router.execute(sw.commands, sw.inputs, sw.deadline, { value: sw.value })).wait();
       console.log('  PROFIT tx', sellRc.hash);
       const s = parseSwap(sellRc);
-      await notifySell({ symbol: b.market.symbol, token: b.market.token, venue: `V4 ${b.pool.name}`, tokens: got, ethOut: s ? s.ethAbs : 0n, hash: sellRc.hash });
+      await notifySell({ symbol: b.market.symbol, token: b.market.token, venue: `V4 ${b.pool.name}`, tokens: got, ethOut: s ? s.ethAbs : 0n, hash: sellRc.hash }).catch(() => {});
+      const net = s ? s.ethAbs - b.size : 0n;
+      const bps = b.size > 0n ? (net * 10000n) / b.size : 0n;
+      notifyTrade({ symbol: b.market.symbol, token: b.market.token, sizeEth: b.size, netEth: net, netBps: bps, sellHash: sellRc.hash, dir: b.dir }).catch(() => {});
     } catch (e) {
       console.log('  missed window -> unwind on curve:', e.shortMessage || e.message);
       const minEth = bpsDown(await curve.quoteSell(token, got), CFG.slippageBps);
       const unwRc = await (await curve.sell(token, got, minEth)).wait();
       console.log('  unwound tx', unwRc.hash);
-      await tg(`↩️ <b>UNWIND</b> ${b.market.symbol} on curve (window closed) — tx ${unwRc.hash.slice(0, 10)}…`);
+      await tg(`↩️ <b>UNWIND</b> ${b.market.symbol} on curve (window closed) — tx ${unwRc.hash.slice(0, 10)}…`).catch(() => {});
     }
   }
   async function execEOA_B(b) {
@@ -276,13 +279,16 @@ async function main() {
     console.log(`  [B] buy V4 ${b.pool.name} ${b.market.symbol} (${b.market.token.slice(0,8)}…) ${formatEther(b.size)} ETH`);
     const buyRc = await (await router.execute(sw.commands, sw.inputs, sw.deadline, { value: sw.value })).wait();
     const got = (await t.balanceOf(wallet.address)) - before;
-    await notifyBuy({ symbol: b.market.symbol, token: b.market.token, venue: `V4 ${b.pool.name}`, ethIn: b.size, tokens: got, hash: buyRc.hash });
+    await notifyBuy({ symbol: b.market.symbol, token: b.market.token, venue: `V4 ${b.pool.name}`, ethIn: b.size, tokens: got, hash: buyRc.hash }).catch(() => {});
     const qSell = await curve.quoteSell(token, got);
     const minEth = bpsDown(qSell, CFG.slippageBps);
     console.log(`  [B] sell curve ${formatEther(got)} tok, min ${formatEther(minEth)} ETH`);
     const sellRc = await (await curve.sell(token, got, minEth)).wait();
     console.log('  done tx', sellRc.hash);
-    await notifySell({ symbol: b.market.symbol, token: b.market.token, venue: 'curve', tokens: got, ethOut: qSell, hash: sellRc.hash });
+    await notifySell({ symbol: b.market.symbol, token: b.market.token, venue: 'curve', tokens: got, ethOut: qSell, hash: sellRc.hash }).catch(() => {});
+    const net = b.net;
+    const bps = b.size > 0n ? (net * 10000n) / b.size : 0n;
+    notifyTrade({ symbol: b.market.symbol, token: b.market.token, sizeEth: b.size, netEth: net, netBps: bps, sellHash: sellRc.hash, dir: b.dir }).catch(() => {});
   }
 
   let busy = false, lastLog = 0, lastGasRefresh = 0;
@@ -328,6 +334,7 @@ async function main() {
       } catch (e) {
         console.log('    exec FAILED:', e.shortMessage || e.message);
         throttleError(`${b.market.symbol} (${b.market.token.slice(0,8)}…) ${b.tag}`, e.shortMessage || e.message);
+        notifyExecFail({ symbol: b.market.symbol, token: b.market.token, sizeEth: b.size, reason: e.shortMessage || e.message }).catch(() => {});
         recordFail();
       } finally {
         busy = false;
@@ -460,7 +467,7 @@ async function main() {
 
   const mode = `${CFG.live ? 'LIVE' : 'DRY-RUN'}/${executor ? 'ATOMIC' : 'EOA'}`;
   console.log('telegram:', tgEnabled ? 'ON' : 'off');
-  await notifyStartup(mode, markets);
+  await notifyStartup(mode, markets).catch(() => {});
   await tick('boot');
   setInterval(() => tick('poll'), CFG.pollMs);
 }

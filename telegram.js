@@ -141,6 +141,32 @@ export async function notifyAtomic({ symbol, token, dir, buyVenue, sellVenue, si
   ]));
 }
 
+export async function notifyTrade({ symbol, token, sizeEth, netEth, netBps, sellHash, dir }) {
+  await refreshEthUsd();
+  const abs = netEth < 0n ? -netEth : netEth;
+  const netSign = netEth >= 0n ? '+' : '\u2212';
+  const netUsd = ethUsd ? ` (${netSign}$${(Number(formatEther(abs)) * ethUsd).toFixed(2)})` : '';
+  return tg(card([
+    `✅ <b>${symbol}${token ? ` (${token.slice(0,8)}&hellip;)` : ''} arb sukses</b>`,
+    ``,
+    `Size: <code>${fmt(sizeEth)} ETH</code>${usdParen(sizeEth)}`,
+    `Profit: <b>${netSign}${fmt(abs)} ETH</b>${netUsd} (${Number(netBps) / 100} bps)`,
+    `Direction: ${dir === 'A' ? 'curve \u2192 V4' : 'V4 \u2192 curve'}`,
+    ``,
+    `🔗 ${txLink(sellHash, 'TX Exec')}`,
+  ]));
+}
+
+export async function notifyExecFail({ symbol, token, sizeEth, reason }) {
+  await refreshEthUsd();
+  return tg(card([
+    `❌ <b>${symbol}${token ? ` (${token.slice(0,8)}&hellip;)` : ''} exec GAGAL</b>`,
+    ``,
+    `Size: <code>${fmt(sizeEth)} ETH</code>${usdParen(sizeEth)}`,
+    `Error: <code>${String(reason).slice(0, 200)}</code>`,
+  ]));
+}
+
 export function notifyError(msg) { return tg(`⚠️ <b>arb error</b>\n<code>${String(msg).slice(0, 300)}</code>`); }
 export const tgEnabled = enabled;
 
