@@ -67,6 +67,10 @@ class PinnedProvider extends JsonRpcProvider {
         const rateLimited = res.status === 429 || res.status === 503 ||
           (res.body.includes('"code":429') || res.body.includes('Too Many Requests'));
         if (rateLimited && attempt < MAX_RETRIES) { await sleep(300 * 2 ** attempt + Math.floor(Math.random() * 200)); continue; }
+        // Log non-200 responses (esp. 400) with FULL body for diagnosis
+        if (res.status !== 200 && res.status !== 429 && res.status !== 503) {
+          console.error(`RPC returned HTTP ${res.status}: ${res.body.slice(0, 300)}`);
+        }
         try { return JSON.parse(res.body); }
         catch { if (attempt < MAX_RETRIES) { await sleep(300 * 2 ** attempt); continue; }
                 throw new Error('bad RPC response: ' + res.body.slice(0, 160)); }

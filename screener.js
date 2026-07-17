@@ -203,7 +203,8 @@ async function refreshCurveState(tokenAddr, factoryAddr, provider) {
     return { noCurve: true };
   } catch (e) {
     const msg = (e.shortMessage || e.message || '').toLowerCase();
-    console.error(`  rpc error refreshing ${tokenAddr.slice(0,10)}: ${msg.slice(0, 100)}`);
+    const code = e.code || '';
+    console.error(`  curve err ${tokenAddr.slice(0,10)} @ ${factoryAddr.slice(0,10)}: [${code}] ${msg.slice(0, 200)}`);
     return { rpcError: true };
   }
 }
@@ -737,10 +738,16 @@ async function evaluateAndNotify(provider, blockNumber, isInitial = false) {
 
 async function refreshAllCurves(provider) {
   let updated = 0, failed = 0, dead = 0;
+  const failByFactory = {};
   for (const info of Object.values(state.tokens)) {
     const cs = await refreshCurveState(info.token, info.factory, provider);
-    if (cs.rpcError) { failed++; continue; }       // RPC blip — keep previous lastActive
-    if (cs.noCurve) { info.lastActive = false; dead++; continue; } // genuinely dead
+    if (cs.rpcError) {
+      failed++;
+      const fac = info.factory ? info.factory.slice(0, 10) : 'unknown';
+      failByFactory[fac] = (failByFactory[fac] || 0) + 1;
+      continue;
+    }
+    if (cs.noCurve) { info.lastActive = false; dead++; continue; }
     info.lastGradPct = cs.gradPct;
     info.lastActive = cs.active;
     info.curveVirtualEth = cs.virtualEth.toString();
@@ -754,7 +761,13 @@ async function refreshAllCurves(provider) {
   const parts = [];
   if (updated) parts.push(`${updated} refreshed`);
   if (dead) parts.push(`${dead} dead`);
-  if (failed) parts.push(`${failed} rpc err skipped`);
+  if (failed) {
+    parts.push(`${failed} rpc err`);
+    // Show factory grouping if 3+ failures share the same factory (multi-token batch failure signal)
+    for (const [fac, cnt] of Object.entries(failByFactory).sort((a, b) => b[1] - a[1])) {
+      if (cnt >= 3) parts.push(`[${fac}.. x${cnt}]`);
+    }
+  }
   if (parts.length) console.log(`refreshed curves: ${parts.join(', ')}`);
 }
 
