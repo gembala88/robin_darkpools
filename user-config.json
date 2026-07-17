@@ -54,7 +54,7 @@
   "eoaFallbackEnabled": false,
   "--- LP SCREENER ---": "LP pool discovery + ranking via DexScreener + on-chain",
   "lpScreener": {
-    "pollIntervalMs": 1200000,
+    "pollIntervalMs": 300000,
     "discoveryIntervalMin": 180,
     "summaryIntervalMin": 360,
     "minTvlUsd": 5000,
@@ -82,7 +82,7 @@
     "slippagePct": 1,
     "deadlineSec": 300,
     "ilExitThresholdPct": 5,
-    "monitorIntervalMs": 60000,
+    "monitorIntervalMs": 25000,
     "maxConsecutiveFails": 3,
     "circuitBreakerCooldownMin": 30
   }
