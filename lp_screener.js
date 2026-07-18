@@ -417,9 +417,9 @@ async function computeHHIPenalty(poolAddr, poolState) {
     new Promise((_, rej) => setTimeout(() => rej(new Error('HHI top-level timeout (180s)')), 180000))
   ]).catch(err => {
     console.log(`  HHI error for ${poolAddr.slice(0, 14)}: ${err.shortMessage || err.message}`);
-    poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     poolState.hhiFailed = (poolState.hhiFailed || 0) + 1;
+    poolState.hhiFailedAt = Date.now();
     return 0;
   });
   return result;
@@ -599,8 +599,9 @@ async function computeV4HHIPenalty(poolId, poolState) {
     new Promise((_, rej) => setTimeout(() => rej(new Error('V4 HHI timeout (180s)')), 180000))
   ]).catch(err => {
     console.log(`  V4 HHI error for ${poolId.slice(0, 18)}: ${err.shortMessage || err.message}`);
-    poolState.hhiChecked = true;
     poolState.hhiChecking = false;
+    poolState.hhiFailed = (poolState.hhiFailed || 0) + 1;
+    poolState.hhiFailedAt = Date.now();
     return 0;
   });
   return result;
@@ -854,7 +855,10 @@ async function evaluatePools() {
     }
 
     // HHI / LP concentration check for candidate pools (once per pool, TVL > $20K)
+    // Retry on failure after 5 min cooldown (hhiFailedAt)
     if (po.score >= (cfgSc('minCandidateScore') || 35) && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 20000) {
+      const cooldownOk = !po.hhiFailedAt || (Date.now() - po.hhiFailedAt) > 300000; // 5 min
+      if (!cooldownOk) continue;
       try {
         const isV4 = (po.labels || []).some(l => l.toLowerCase() === 'v4');
         const poolAddr = lc(po.pairAddress);
@@ -867,9 +871,9 @@ async function evaluatePools() {
         }
       } catch (err) {
         console.error(`  >> HHI check FAILED for ${po.pairAddress.slice(0, 14)}: ${err.shortMessage || err.message}`);
-        po.hhiChecked = true;
         po.hhiChecking = false;
         po.hhiFailed = (po.hhiFailed || 0) + 1;
+        po.hhiFailedAt = Date.now();
       }
     }
 
