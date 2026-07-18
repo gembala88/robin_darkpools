@@ -887,7 +887,8 @@ async function evaluatePools() {
         po.tvlUsd >= 20000) {
       const ao = await checkAutoOpenConditions(po);
       if (ao.pass) {
-        await autoOpenDryRun(po);
+        const lpProv = await makeProvider('LP_SCREENER_RPC_URL').catch(() => null);
+        await autoOpenDryRun(po, lpProv);
       } else {
         console.log(`  [auto-open BLOCKED] ${po.baseToken?.symbol || '?'}: ${ao.reason}`);
       }

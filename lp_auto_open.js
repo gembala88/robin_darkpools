@@ -33,17 +33,29 @@ async function readDecimals(addr, provider) {
   } catch { return 18; }
 }
 
+// ===== ON-CHAIN POOL TYPE DETECTION =====
+// Tries token0() on pool address. If it succeeds with valid address,
+// the pool has a contract = V3. If it fails/reverts = V4 (logical pool
+// in PoolManager, not a deployed contract).
+export async function detectPoolType(poolAddr, provider) {
+  try {
+    const pool = new Contract(poolAddr, ['function token0() view returns (address)'], provider);
+    const t0 = await pool.token0();
+    if (t0 && t0 !== '0x0000000000000000000000000000000000000000') return 'V3';
+  } catch {}
+  return 'V4';
+}
+
 // ===== ON-CHAIN POOL ENRICHMENT =====
 // Adds token0/token1 ordering, fee, tickSpacing, decimals from chain.
-// For V3: reads from pool contract directly.
-// For V4: marks as partial (fee/tickSpacing not derivable from DexScreener alone).
+// Detects V3 vs V4 on-chain (not from DexScreener labels).
 export async function enrichPoolData(po, provider) {
   if (!provider) provider = await makeProvider('LP_SCREENER_RPC_URL');
 
-  const isV4 = (po.labels || []).some(l => l.toLowerCase() === 'v4');
   const poolAddr = po.pairAddress;
+  const dexType = await detectPoolType(poolAddr, provider);
 
-  if (!isV4) {
+  if (dexType === 'V3') {
     try {
       const pool = new Contract(poolAddr, [
         'function token0() view returns (address)',
@@ -96,20 +108,24 @@ export function recordTrendSnapshot(po) {
   }
 }
 
-// Linear regression slope on TVL, returns % change per cycle
+// Linear regression slope on TVL from LAST 4 entries only,
+// returns % change per cycle. Using only last 4 avoids old
+// history masking recent declines.
 export function computeTrend(po) {
   const h = po.trendHistory;
   if (!h || h.length < 4) return { direction: 'neutral', slopePct: 0, reason: `< 4 data points` };
 
-  const N = h.length;
+  // Use only the most recent 4 entries
+  const recent = h.slice(-4);
+  const N = recent.length;
   let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-  const meanY = h.reduce((s, p) => s + p.tvlUsd, 0) / N;
+  const meanY = recent.reduce((s, p) => s + p.tvlUsd, 0) / N;
   if (meanY === 0) return { direction: 'neutral', slopePct: 0, reason: 'zero TVL' };
 
   for (let i = 0; i < N; i++) {
     sumX += i;
-    sumY += h[i].tvlUsd;
-    sumXY += i * h[i].tvlUsd;
+    sumY += recent[i].tvlUsd;
+    sumXY += i * recent[i].tvlUsd;
     sumX2 += i * i;
   }
   const slope = (N * sumXY - sumX * sumY) / (N * sumX2 - sumX * sumX);
@@ -194,13 +210,18 @@ export async function checkAutoOpenConditions(po) {
 }
 
 // ===== DRY-RUN NOTIFICATION =====
-export async function autoOpenDryRun(po) {
+export async function autoOpenDryRun(po, provider) {
   if (AUTO_OPEN_DRY !== 1) return;
 
   const b = po.baseToken;
   const q = po.quoteToken;
-  const ver = po.labels?.join('/') || po.version || '?';
-  const sym = `${b?.symbol || '?'}/${q?.symbol || '?'} (${ver})`;
+
+  // Detect pool type on-chain (not from DexScreener labels)
+  let dexType = '?';
+  if (provider && po.pairAddress) {
+    try { dexType = await detectPoolType(po.pairAddress, provider); } catch {}
+  }
+  const sym = `${b?.symbol || '?'}/${q?.symbol || '?'} (${dexType})`;
   const trend = computeTrend(po);
 
   const msg = [
@@ -211,7 +232,7 @@ export async function autoOpenDryRun(po) {
     ``,
     `🏅 Score: ${po.score}/100`,
     `💰 TVL: $${(po.tvlUsd || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`,
-    `📈 Trend: ${trend.direction === 'up' ? 'RISING' : 'FLAT'} (${trend.slopePct}%/cycle)`,
+    `📈 Trend: ${trend.direction === 'up' ? 'RISING' : trend.direction === 'down' ? 'DECLINING' : 'FLAT'} (${trend.slopePct}%/cycle)`,
     `📊 HHI: ${po.hhiData?.hhi}`,
     `✅ GMGN: clean`,
     `✅ Governance: OK`,
