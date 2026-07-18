@@ -81,7 +81,7 @@
     "rangeDownPct": 20,
     "slippagePct": 1,
     "deadlineSec": 300,
-    "ilExitThresholdPct": 5,
+    "ilExitThresholdPct": 10,
     "monitorIntervalMs": 25000,
     "maxConsecutiveFails": 3,
     "circuitBreakerCooldownMin": 30
