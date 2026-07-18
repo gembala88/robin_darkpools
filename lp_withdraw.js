@@ -28,27 +28,37 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
   if (!wallet) {
     console.log('  DRY-RUN mode');
     const pos = await nfpm.positions.staticCall(tokenId);
+    const dt0 = new Contract(pos.token0, ERC20_ABI, provider);
+    const dt1 = new Contract(pos.token1, ERC20_ABI, provider);
+    const [dsym0, dsym1, d0, d1] = await Promise.all([
+      dt0.symbol().catch(() => pos.token0.slice(0, 10)),
+      dt1.symbol().catch(() => pos.token1.slice(0, 10)),
+      dt0.decimals().catch(() => 18),
+      dt1.decimals().catch(() => 18),
+    ]);
     console.log(`  token0: ${pos.token0}, token1: ${pos.token1}`);
     console.log(`  liquidity: ${formatUnits(pos.liquidity, 18)}`);
-    console.log(`  tokensOwed0: ${formatUnits(pos.tokensOwed0, 18)}`);
-    console.log(`  tokensOwed1: ${formatEther(pos.tokensOwed1)}`);
+    console.log(`  tokensOwed0: ${formatUnits(pos.tokensOwed0, d0)} ${dsym0}`);
+    console.log(`  tokensOwed1: ${formatUnits(pos.tokensOwed1, d1)} ${dsym1}`);
     console.log(`  tickLower: ${pos.tickLower}, tickUpper: ${pos.tickUpper}`);
     return {};
   }
 
-  // Read position + token symbols dynamically
+  // Read position + token symbols/decimals dynamically
   const pos = await nfpm.positions.staticCall(tokenId);
   const t0 = new Contract(pos.token0, ERC20_ABI, provider);
   const t1 = new Contract(pos.token1, ERC20_ABI, provider);
-  const [sym0, sym1] = await Promise.all([
+  const [sym0, sym1, decimals0, decimals1] = await Promise.all([
     t0.symbol().catch(() => pos.token0.slice(0, 10)),
     t1.symbol().catch(() => pos.token1.slice(0, 10)),
+    t0.decimals().catch(() => 18),
+    t1.decimals().catch(() => 18),
   ]);
 
   console.log(`  Position: ${sym0}/${sym1}`);
   console.log(`  Current liquidity: ${formatUnits(pos.liquidity, 18)}`);
-  console.log(`  tokensOwed0: ${formatUnits(pos.tokensOwed0, 18)} ${sym0}`);
-  console.log(`  tokensOwed1: ${formatEther(pos.tokensOwed1)} ${sym1}`);
+  console.log(`  tokensOwed0: ${formatUnits(pos.tokensOwed0, decimals0)} ${sym0}`);
+  console.log(`  tokensOwed1: ${formatUnits(pos.tokensOwed1, decimals1)} ${sym1}`);
 
   // Track collected fees
   let collected0 = 0n;
@@ -95,7 +105,7 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
     const colTx = await wallet.sendTransaction(colPop);
     console.log(`  collect tx: ${colTx.hash}`);
     await colTx.wait();
-    console.log(`  collect done — ${formatUnits(collected0, 18)} ${sym0} + ${formatEther(collected1)} ${sym1}`);
+    console.log(`  collect done — ${formatUnits(collected0, decimals0)} ${sym0} + ${formatUnits(collected1, decimals1)} ${sym1}`);
   } catch (e) {
     console.log(`  collect failed (may be fine): ${e.shortMessage?.slice(0,60) || e.message?.slice(0,60)}`);
   }
@@ -115,12 +125,12 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
   // Show final balances
   const finalBal0 = await t0.balanceOf(wallet.address);
   const finalBal1 = await t1.balanceOf(wallet.address);
-  console.log(`\n  Final ${sym0} balance: ${formatUnits(finalBal0, 18)}`);
-  console.log(`  Final ${sym1} balance: ${formatEther(finalBal1)}`);
+  console.log(`\n  Final ${sym0} balance: ${formatUnits(finalBal0, decimals0)}`);
+  console.log(`  Final ${sym1} balance: ${formatUnits(finalBal1, decimals1)}`);
 
   return {
-    fee0: formatUnits(collected0, 18),
-    fee1: formatEther(collected1),
+    fee0: formatUnits(collected0, decimals0),
+    fee1: formatUnits(collected1, decimals1),
     sym0, sym1,
     token0: pos.token0, token1: pos.token1,
   };
@@ -147,12 +157,14 @@ export async function withdrawV4(provider, wallet, config, tokenId = null) {
   const currency0 = poolKey.currency0;
   const currency1 = poolKey.currency1;
 
-  // Read token symbols dynamically
+  // Read token symbols/decimals dynamically
   const t0 = new Contract(currency0, ERC20_ABI, provider);
   const t1 = new Contract(currency1, ERC20_ABI, provider);
-  const [sym0, sym1] = await Promise.all([
+  const [sym0, sym1, decimals0, decimals1] = await Promise.all([
     t0.symbol().catch(() => currency0.slice(0, 10)),
     t1.symbol().catch(() => currency1.slice(0, 10)),
+    t0.decimals().catch(() => 18),
+    t1.decimals().catch(() => 18),
   ]);
 
   // Use getPositionLiquidity(uint256)
@@ -217,8 +229,8 @@ export async function withdrawV4(provider, wallet, config, tokenId = null) {
   // Show final balances
   const finalBal0 = await t0.balanceOf(wallet.address);
   const finalBal1 = await t1.balanceOf(wallet.address);
-  console.log(`  Final ${sym0} balance: ${formatUnits(finalBal0, 18)}`);
-  console.log(`  Final ${sym1} balance: ${formatEther(finalBal1)}`);
+  console.log(`  Final ${sym0} balance: ${formatUnits(finalBal0, decimals0)}`);
+  console.log(`  Final ${sym1} balance: ${formatUnits(finalBal1, decimals1)}`);
 
   return {
     sym0, sym1,
