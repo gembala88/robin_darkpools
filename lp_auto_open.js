@@ -11,16 +11,14 @@
 //   autoOpenExecute(po)   — execute swap + deposit (Phase 2)
 
 import 'dotenv/config';
-import { Contract, Wallet, parseEther, formatEther, formatUnits, MaxUint256, AbiCoder, keccak256 } from 'ethers';
-import fs from 'node:fs';
+import { Contract, Wallet, parseEther, formatEther, formatUnits, MaxUint256, AbiCoder } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, V4, V4_NFPM, NATIVE, UC } from './config.js';
 import { ERC20_ABI, V3_SWAP_ROUTER_ABI, V3_QUOTERV2_ABI, V3_NFPM_ABI, V4_NFPM_ABI } from './abis.js';
 import { tgScreener } from './telegram.js';
-import { computeTickRange, sqrtPriceAtTick, computeLiquidity, loadState as loadLpState, saveState as saveLpState, computeV4PoolId } from './lp_deposit.js';
+import { depositV3, depositV4, loadState as loadLpState, saveState as saveLpState } from './lp_deposit.js';
 
 const AUTO_OPEN_DRY = 1; // Phase 1: default dry-run. Set 0 only after user review.
-const LP_STATE_FILE = new URL('./lp_state.json', import.meta.url);
 
 // Trusted known tokens for swap routing
 const WETH_ADDR = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
@@ -35,10 +33,6 @@ const WETH_ABI = [
 ];
 
 // ===== HELPERS =====
-
-function loadLpState() {
-  try { return JSON.parse(fs.readFileSync(LP_STATE_FILE, 'utf8')); } catch { return { positions: [] }; }
-}
 
 async function readDecimals(addr, provider) {
   if (!addr || addr === '0x0000000000000000000000000000000000000000') return 18;
@@ -350,23 +344,6 @@ async function swapWithFeeDiscovery(router, quoter, tokenIn, tokenOut, amountIn,
   return null;
 }
 
-// ===== V3 TICK/SQRT HELPERS (generic) =====
-
-async function getV3TickGeneric(poolAddr, provider) {
-  const data = await provider.call({ to: poolAddr, data: '0x3850c7bd' });
-  const decoded = AbiCoder.defaultAbiCoder().decode(
-    ['uint160', 'int24', 'uint16', 'uint16', 'uint16', 'uint8', 'bool'], data
-  );
-  return Number(decoded[1]);
-}
-
-async function getV3SqrtPriceX96(poolAddr, provider) {
-  const data = await provider.call({ to: poolAddr, data: '0x3850c7bd' });
-  const [sqrt] = AbiCoder.defaultAbiCoder().decode(['uint160'], data.slice(0, 66));
-  return BigInt(sqrt);
-}
-
-// ===== GENERIC SWAP (real execution) =====
 // poolInfo: { dex, token0, token1, fee, tickSpacing, decimals0, decimals1, poolAddr }
 // Returns: { token0Bal, token1Bal } or null
 export async function genericSwap(poolInfo, amountEth, provider, wallet) {
@@ -444,14 +421,9 @@ export async function genericSwap(poolInfo, amountEth, provider, wallet) {
 }
 
 // ===== GENERIC DEPOSIT =====
-// poolInfo: same as genericSwap
-// Returns position object or null
+// Maps poolInfo → depositV3/depositV4 from lp_deposit.js (single source of truth)
 export async function genericDeposit(poolInfo, amountEth, provider, wallet, config = null) {
-  const cfg = config || {
-    rangeSymmetricPct: 15,
-    slippagePct: 1,
-    deadlineSec: 300,
-  };
+  const cfg = config || { rangeSymmetricPct: 15, slippagePct: 1, deadlineSec: 300 };
 
   if (!wallet) {
     console.log(`\n=== genericDeposit (DRY) — ${poolInfo.poolAddr.slice(0, 14)}...`);
@@ -459,276 +431,30 @@ export async function genericDeposit(poolInfo, amountEth, provider, wallet, conf
     return null;
   }
 
-  if (poolInfo.dex === 'V3') return await depositV3Generic(poolInfo, cfg, provider, wallet);
-  if (poolInfo.dex === 'V4') return await depositV4Generic(poolInfo, cfg, provider, wallet);
+  if (poolInfo.dex === 'V3') {
+    return await depositV3(provider, wallet, cfg, {
+      token0: poolInfo.token0, token1: poolInfo.token1,
+      fee: poolInfo.fee, tickSpacing: poolInfo.tickSpacing,
+      poolAddr: poolInfo.poolAddr, decimals0: poolInfo.decimals0,
+      decimals1: poolInfo.decimals1, baseToken: poolInfo.baseToken,
+      quoteToken: poolInfo.quoteToken,
+    });
+  }
+  if (poolInfo.dex === 'V4') {
+    if (poolInfo.partial) {
+      console.log('  SKIP: V4 pool with incomplete data (fee/tickSpacing unknown)');
+      return null;
+    }
+    return await depositV4(provider, wallet, cfg, {
+      currency0: poolInfo.currency0, currency1: poolInfo.currency1,
+      fee: poolInfo.fee, tickSpacing: poolInfo.tickSpacing,
+      hooks: poolInfo.hooks, decimals0: poolInfo.decimals0,
+      decimals1: poolInfo.decimals1, baseToken: poolInfo.baseToken,
+      quoteToken: poolInfo.quoteToken,
+    });
+  }
   console.log(`  SKIP: unknown dex type ${poolInfo.dex}`);
   return null;
-}
-
-// ===== V3 DEPOSIT (generic — follows exact pattern from lp_deposit.js depositV3) =====
-async function depositV3Generic(poolInfo, config, provider, wallet) {
-  console.log(`\n=== V3 Deposit — ${poolInfo.poolAddr.slice(0, 14)} ===`);
-  console.log(`  ${poolInfo.token0.slice(0,10)}/${poolInfo.token1.slice(0,10)} fee=${poolInfo.fee}`);
-
-  const token0 = new Contract(poolInfo.token0, ERC20_ABI, provider);
-  const token1 = new Contract(poolInfo.token1, ERC20_ABI, provider);
-
-  const factory = new Contract(V3.factory, ['function feeAmountTickSpacing(uint24) view returns (int24)'], provider);
-  const tickSpacing = poolInfo.tickSpacing || Number(await factory.feeAmountTickSpacing(poolInfo.fee));
-  const symmetricPct = Number(config.rangeSymmetricPct || 15);
-
-  const currentTick = await getV3TickGeneric(poolInfo.poolAddr, provider);
-  const entryTick = currentTick;
-  const { tickLower, tickUpper } = computeTickRange(currentTick, symmetricPct, tickSpacing);
-
-  const sqrtPriceX96 = await getV3SqrtPriceX96(poolInfo.poolAddr, provider);
-  const walletAddr = wallet.address;
-
-  const bal0 = await token0.balanceOf(walletAddr);
-  const bal1 = await token1.balanceOf(walletAddr);
-
-  console.log(`  Tick: ${currentTick}`);
-  console.log(`  Range: ${tickLower} → ${tickUpper} (±${symmetricPct}%)`);
-  console.log(`  Bal0: ${formatUnits(bal0, poolInfo.decimals0)}`);
-  console.log(`  Bal1: ${formatUnits(bal1, poolInfo.decimals1)}`);
-
-  if (bal0 === 0n || bal1 === 0n) {
-    console.log('  SKIP: zero balance for one side');
-    return null;
-  }
-
-  // Compute liquidity (exact same formula as depositV3)
-  const sqrtPX96 = BigInt(sqrtPriceX96);
-  const sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, sqrtPX96);
-  const sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, sqrtPX96);
-  const Q96 = 1n << 96n;
-  const L0 = bal0 * sqrtPX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPX96) * Q96);
-  const L1 = bal1 * Q96 / (sqrtPX96 - sqrtPaX96);
-  const expectedLiquidity = L0 < L1 ? L0 : L1;
-
-  // Implied amounts (copy of the proven fix for amountMin)
-  let implied0 = bal0, implied1 = bal1;
-  if (expectedLiquidity === L0) {
-    implied1 = expectedLiquidity * (sqrtPX96 - sqrtPaX96) / Q96;
-  } else {
-    implied0 = expectedLiquidity * (sqrtPbX96 - sqrtPX96) * Q96 / (sqrtPX96 * sqrtPbX96);
-  }
-  const slippagePct = BigInt(config.slippagePct);
-  const amount0Min = implied0 - (implied0 * slippagePct) / 100n;
-  const amount1Min = implied1 - (implied1 * slippagePct) / 100n;
-
-  console.log(`  L: ${expectedLiquidity}`);
-  console.log(`  Implied0: ${formatUnits(implied0, poolInfo.decimals0)}`);
-  console.log(`  Implied1: ${formatUnits(implied1, poolInfo.decimals1)}`);
-
-  // Approve NFPM for both tokens
-  const nfpm = new Contract(V3.nfpm, V3_NFPM_ABI, wallet);
-  await approveToken(token0, V3.nfpm, bal0, wallet, 'token0');
-  await approveToken(token1, V3.nfpm, bal1, wallet, 'token1');
-
-  // Mint
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + config.deadlineSec);
-  const mintParams = {
-    token0: poolInfo.token0,
-    token1: poolInfo.token1,
-    fee: poolInfo.fee,
-    tickLower, tickUpper,
-    amount0Desired: bal0,
-    amount1Desired: bal1,
-    amount0Min, amount1Min,
-    recipient: walletAddr,
-    deadline,
-  };
-
-  console.log(`\n--- Minting ---`);
-  const pop = await nfpm.mint.populateTransaction(mintParams);
-  const gas = await wallet.estimateGas(pop);
-  console.log(`  Est gas: ${gas}`);
-  const tx = await wallet.sendTransaction(pop);
-  console.log(`  Mint tx: ${tx.hash}`);
-  const receipt = await tx.wait();
-
-  // Extract tokenId from Transfer event
-  const nfpmLogs = receipt.logs.filter(l => l.address.toLowerCase() === V3.nfpm.toLowerCase());
-  let tokenId = null;
-  for (const log of nfpmLogs) {
-    if (log.topics[0] === '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
-        && log.topics[1] === '0x0000000000000000000000000000000000000000000000000000000000000000') {
-      tokenId = BigInt(log.topics[3]).toString();
-      break;
-    }
-  }
-  console.log(`  Token ID: ${tokenId}`);
-
-  const symbol = `${poolInfo.baseToken?.symbol || '?'}/${poolInfo.quoteToken?.symbol || '?'}`;
-  const position = {
-    dex: 'V3', pool: symbol, tokenId: tokenId?.toString(),
-    token0: poolInfo.token0, token1: poolInfo.token1, fee: poolInfo.fee,
-    entryTick, tickLower, tickUpper,
-    amount0: bal0.toString(), amount1: bal1.toString(),
-    block: receipt.blockNumber, tx: tx.hash, ts: Date.now(),
-  };
-
-  const state = loadLpState();
-  state.positions.push(position);
-  saveLpState(state);
-
-  console.log('  ✅ V3 position created');
-  return position;
-}
-
-// ===== V4 DEPOSIT (generic — follows exact pattern from lp_deposit.js depositV4) =====
-async function depositV4Generic(poolInfo, config, provider, wallet) {
-  if (poolInfo.partial) {
-    console.log(`  SKIP: V4 pool has incomplete data (fee/tickSpacing unknown)`);
-    return null;
-  }
-
-  console.log(`\n=== V4 Deposit — ${poolInfo.poolAddr.slice(0, 14)} ===`);
-
-  const key = { currency0: poolInfo.currency0, currency1: poolInfo.currency1,
-    fee: poolInfo.fee, tickSpacing: poolInfo.tickSpacing, hooks: poolInfo.hooks || '0x0000000000000000000000000000000000000000' };
-  const poolId = poolInfo.poolId || computeV4PoolId(key);
-  const abi = AbiCoder.defaultAbiCoder();
-
-  // Get slot0 from stateView
-  const stateView = new Contract(V4.stateView, [
-    'function getSlot0(bytes32) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)',
-  ], provider);
-  const [sqrtPriceX96BN, currentTickBN] = await stateView.getSlot0.staticCall(poolId);
-  const sqrtPriceX96 = BigInt(sqrtPriceX96BN);
-  const currentTick = Number(currentTickBN);
-  const tickSpacing = key.tickSpacing;
-  const { tickLower, tickUpper } = computeTickRange(currentTick, config.rangeSymmetricPct, tickSpacing);
-
-  const token0 = new Contract(key.currency0, ERC20_ABI, provider);
-  const token1 = new Contract(key.currency1, ERC20_ABI, provider);
-  const walletAddr = wallet.address;
-  const bal0 = await token0.balanceOf(walletAddr);
-  const bal1 = await token1.balanceOf(walletAddr);
-
-  console.log(`  Tick: ${currentTick}  Range: ${tickLower}→${tickUpper}`);
-  console.log(`  Balances: ${formatUnits(bal0, poolInfo.decimals0 || 18)} / ${formatUnits(bal1, poolInfo.decimals1 || 18)}`);
-
-  if (bal0 === 0n || bal1 === 0n) {
-    console.log('  SKIP: zero balance for one side');
-    return null;
-  }
-
-  const keyTuple = [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks];
-  const MINT_POSITION = 2;
-  const settlement = (1n << 128n) - 1n;
-  const Q96 = 1n << 96n;
-
-  // Compute liquidity (same two-sided formula as depositV4)
-  let liquidity;
-  let sqrtPaX96, sqrtPbX96;
-
-  if (sqrtPriceX96 === 0n) {
-    const initialSqrtP = 1n << 96n;
-    sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, initialSqrtP);
-    sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, initialSqrtP);
-    const L0 = bal0 * initialSqrtP * sqrtPbX96 / ((sqrtPbX96 - initialSqrtP) * Q96);
-    const L1 = bal1 * Q96 / (initialSqrtP - sqrtPaX96);
-    liquidity = L0 < L1 ? L0 : L1;
-  } else {
-    sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, sqrtPriceX96);
-    sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, sqrtPriceX96);
-    const L0 = bal0 * sqrtPriceX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPriceX96) * Q96);
-    const L1 = bal1 * Q96 / (sqrtPriceX96 - sqrtPaX96);
-    liquidity = L0 < L1 ? L0 : L1;
-  }
-
-  console.log(`  L: ${liquidity}`);
-
-  // Build params (exact same pattern as depositV4)
-  const mintParams = abi.encode(
-    ['tuple(address,address,uint24,int24,address)', 'int24', 'int24', 'uint256', 'uint128', 'uint128', 'address', 'bytes'],
-    [keyTuple, tickLower, tickUpper, liquidity, settlement, settlement, walletAddr, '0x']
-  );
-  const settlePairParams = abi.encode(
-    ['address', 'address'], [key.currency0, key.currency1]
-  );
-  const takePairParams = abi.encode(
-    ['address', 'address', 'address'], [key.currency0, key.currency1, walletAddr]
-  );
-
-  const SETTLE_PAIR = 0x0d;
-  const TAKE_PAIR = 0x11;
-  const actions = new Uint8Array([MINT_POSITION, SETTLE_PAIR, TAKE_PAIR]);
-  const paramsList = [mintParams, settlePairParams, takePairParams];
-
-  // Approve Permit2 for both tokens
-  const permit2 = new Contract(V4.permit2, [
-    'function approve(address token, address spender, uint160 amount, uint48 expiration)',
-    'function allowance(address,address,address) view returns (uint160,uint48,uint48)',
-  ], wallet);
-
-  const uint160Max = (1n << 160n) - 1n;
-  const uint48Max = (1n << 48n) - 1n;
-
-  for (const [token, decimals] of [[key.currency0, poolInfo.decimals0 || 18], [key.currency1, poolInfo.decimals1 || 18]]) {
-    const t = new Contract(token, ERC20_ABI, wallet);
-    const bal = await t.balanceOf(wallet.address);
-    if (bal === 0n) continue;
-    const erc20Allow = await t.allowance(wallet.address, V4.permit2);
-    if (erc20Allow < bal) {
-      console.log(`  Approving token ${token.slice(0, 10)} for Permit2...`);
-      const tx = await t.approve.populateTransaction(V4.permit2, MaxUint256);
-      const sent = await wallet.sendTransaction(tx);
-      await sent.wait();
-    }
-    const [p2Allow, p2Exp] = await permit2.allowance.staticCall(wallet.address, token, V4_NFPM);
-    const now = BigInt(Math.floor(Date.now() / 1000));
-    if (p2Allow < bal || p2Exp <= now) {
-      console.log(`  Approving Permit2→NFPM for ${token.slice(0, 10)}...`);
-      const tx = await permit2.approve.populateTransaction(token, V4_NFPM, uint160Max, uint48Max);
-      const sent = await wallet.sendTransaction(tx);
-      await sent.wait();
-    }
-  }
-
-  // Execute modifyLiquidities
-  const nfpm = new Contract(V4_NFPM, V4_NFPM_ABI, wallet);
-  const unlockData = abi.encode(['bytes', 'bytes[]'], [actions, paramsList]);
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + (config.deadlineSec || 300));
-
-  console.log(`\n--- Minting V4 position ---`);
-  const pop = await nfpm.modifyLiquidities.populateTransaction(unlockData, deadline);
-  const gas = await wallet.estimateGas(pop);
-  console.log(`  Est gas: ${gas}`);
-  const tx = await wallet.sendTransaction(pop);
-  console.log(`  Mint tx: ${tx.hash}`);
-  const receipt = await tx.wait();
-
-  // Extract tokenId from Transfer event
-  const nfpmLogs = receipt.logs.filter(l => l.address.toLowerCase() === V4_NFPM.toLowerCase());
-  let tokenId = null;
-  for (const log of nfpmLogs) {
-    if (log.topics[0] === '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
-        && log.topics[1] === '0x0000000000000000000000000000000000000000000000000000000000000000') {
-      tokenId = BigInt(log.topics[3]).toString();
-      break;
-    }
-  }
-  console.log(`  Token ID: ${tokenId}`);
-
-  const position = {
-    dex: 'V4', pool: `${poolInfo.baseToken?.symbol || '?'}/${poolInfo.quoteToken?.symbol || '?'}`,
-    tokenId: tokenId?.toString(),
-    currency0: key.currency0, currency1: key.currency1,
-    fee: key.fee, tickSpacing: key.tickSpacing, hooks: key.hooks,
-    poolId, entryTick: currentTick, tickLower, tickUpper,
-    liquidity: liquidity.toString(),
-    block: receipt.blockNumber, tx: tx.hash, ts: Date.now(),
-  };
-
-  const state = loadLpState();
-  state.positions.push(position);
-  saveLpState(state);
-
-  console.log('  ✅ V4 position created');
-  return position;
 }
 
 // ===== AUTO-OPEN EXECUTE (Phase 2) =====

@@ -98,8 +98,8 @@ export function computeV4PoolId(key) {
 }
 
 // Get current tick from V3 pool
-async function getV3Tick(provider) {
-  const slot0 = await provider.call({ to: LP_V3_CASHCAT_WETH.pool, data: '0x3850c7bd' });
+async function getV3Tick(provider, poolAddr = LP_V3_CASHCAT_WETH.pool) {
+  const slot0 = await provider.call({ to: poolAddr, data: '0x3850c7bd' });
   const decoded = AbiCoder.defaultAbiCoder().decode(
     ['uint160', 'int24', 'uint16', 'uint16', 'uint16', 'uint8', 'bool'],
     slot0
@@ -108,8 +108,8 @@ async function getV3Tick(provider) {
 }
 
 // Get current tick and sqrtPriceX96 from V4 pool
-async function getV4Slot0(provider) {
-  const poolId = computeV4PoolId(LP_V4_CASHCAT_USDG.key);
+async function getV4Slot0(provider, poolKey = LP_V4_CASHCAT_USDG.key) {
+  const poolId = computeV4PoolId(poolKey);
   const stateView = new Contract(V4.stateView, [
     'function getSlot0(bytes32) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)',
   ], provider);
@@ -154,34 +154,46 @@ export function computeLiquidity(amount0, amount1, sqrtPriceX96, currentTick, ti
   return L0 < L1 ? L0 : L1;
 }
 
-async function depositV3(provider, wallet, config) {
-  console.log('\n=== V3 CASHCAT/WETH 1% Deposit ===');
-  if (!config.enableV3CashcatWeth) { console.log('  SKIPPED (disabled in config)'); return null; }
+export async function depositV3(provider, wallet, config, poolInfo = null) {
+  const useDefault = !poolInfo;
+  const token0 = useDefault ? CASHCAT : poolInfo.token0;
+  const token1 = useDefault ? WETH : poolInfo.token1;
+  const fee = useDefault ? 10000 : poolInfo.fee;
+  const poolAddr = useDefault ? LP_V3_CASHCAT_WETH.pool : poolInfo.poolAddr;
+  const symbol = useDefault ? LP_V3_CASHCAT_WETH.symbol
+    : `${poolInfo.baseToken?.symbol || '?'}/${poolInfo.quoteToken?.symbol || '?'}`;
+  const decimals0 = useDefault ? 18 : poolInfo.decimals0;
+  const decimals1 = useDefault ? 18 : poolInfo.decimals1;
+  const tickSpacing = useDefault
+    ? Number(await (new Contract(V3.factory, ['function feeAmountTickSpacing(uint24) view returns (int24)'], provider))
+        .feeAmountTickSpacing(LP_V3_CASHCAT_WETH.fee))
+    : poolInfo.tickSpacing;
 
-  const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
-  const weth = new Contract(WETH, ERC20_ABI, provider);
-  const factory = new Contract(V3.factory, ['function feeAmountTickSpacing(uint24) view returns (int24)'], provider);
-  const tickSpacing = Number(await factory.feeAmountTickSpacing(LP_V3_CASHCAT_WETH.fee));
+  console.log(`\n=== V3 ${symbol} ${fee / 10000}% Deposit ===`);
+  if (useDefault && !config.enableV3CashcatWeth) { console.log('  SKIPPED (disabled in config)'); return null; }
+
+  const t0 = new Contract(token0, ERC20_ABI, provider);
+  const t1 = new Contract(token1, ERC20_ABI, provider);
   const symmetricPct = Number(config.rangeSymmetricPct || 15);
 
-  const currentTick = await getV3Tick(provider);
+  const currentTick = await getV3Tick(provider, poolAddr);
   const entryTick = currentTick;
   const { tickLower, tickUpper } = computeTickRange(currentTick, symmetricPct, tickSpacing);
 
-  const slot0 = await provider.call({ to: LP_V3_CASHCAT_WETH.pool, data: '0x3850c7bd' });
+  const slot0 = await provider.call({ to: poolAddr, data: '0x3850c7bd' });
   const [sqrtPriceX96] = AbiCoder.defaultAbiCoder().decode(['uint160'], slot0.slice(0, 66));
 
   const walletAddr = wallet?.address || (process.env.PRIVATE_KEY ? new Wallet(process.env.PRIVATE_KEY).address : NATIVE);
-  const cashcatBalance = await cashcat.balanceOf(walletAddr);
-  const wethBalance = await weth.balanceOf(walletAddr);
+  const bal0 = await t0.balanceOf(walletAddr);
+  const bal1 = await t1.balanceOf(walletAddr);
 
   console.log(`  Tick current: ${currentTick}`);
   console.log(`  Range: ${tickLower} → ${tickUpper} (±${symmetricPct}%)`);
-  console.log(`  CASHCAT balance: ${formatEther(cashcatBalance)}`);
-  console.log(`  WETH balance:    ${formatEther(wethBalance)}`);
+  console.log(`  ${symbol.split('/')[0]} balance: ${formatUnits(bal0, decimals0)}`);
+  console.log(`  ${symbol.split('/')[1]} balance: ${formatUnits(bal1, decimals1)}`);
 
-  const amount0Desired = cashcatBalance;
-  const amount1Desired = wethBalance;
+  const amount0Desired = bal0;
+  const amount1Desired = bal1;
   const slippagePct = BigInt(config.slippagePct);
   const deadline = BigInt(Math.floor(Date.now() / 1000) + config.deadlineSec);
 
@@ -209,48 +221,43 @@ async function depositV3(provider, wallet, config) {
   console.log(`  sqrtPaX96: ${sqrtPaX96}`);
   console.log(`  sqrtPbX96: ${sqrtPbX96}`);
   console.log(`  sqrtPX96:  ${sqrtPX96}`);
-  console.log(`  amount0 (CASHCAT): ${formatEther(amount0Desired)}`);
-  console.log(`  amount1 (WETH):    ${formatEther(amount1Desired)}`);
+  console.log(`  amount0 (${symbol.split('/')[0]}): ${formatUnits(amount0Desired, decimals0)}`);
+  console.log(`  amount1 (${symbol.split('/')[1]}): ${formatUnits(amount1Desired, decimals1)}`);
   console.log(`  L0 = amount0·sqrtP·sqrtPb / ((sqrtPb-sqrtP)·Q96) = ${L0_debug}`);
   console.log(`  L1 = amount1·Q96 / (sqrtP-sqrtPa) = ${L1_debug}`);
-  console.log(`  L = min(L0, L1) = ${expectedLiquidity}  (${expectedLiquidity === L0_debug ? 'L0-constrained (CASHCAT side)' : 'L1-constrained (WETH side)'})`);
-  console.log(`  Implied amount0 used: ${formatEther(implied0)} CASHCAT`);
-  console.log(`  Implied amount1 used: ${formatEther(implied1)} WETH`);
+  console.log(`  L = min(L0, L1) = ${expectedLiquidity}  (${expectedLiquidity === L0_debug ? 'L0-constrained' : 'L1-constrained'})`);
+  console.log(`  Implied amount0 used: ${formatUnits(implied0, decimals0)}`);
+  console.log(`  Implied amount1 used: ${formatUnits(implied1, decimals1)}`);
 
   if (!wallet) {
     console.log('  DRY-RUN: no wallet, skipping mint.');
-    return { token0: CASHCAT, token1: WETH, fee: 10000, tickLower, tickUpper, amount0Desired, amount1Desired, expectedLiquidity };
+    return { token0, token1, fee, tickLower, tickUpper, amount0Desired, amount1Desired, expectedLiquidity };
   }
 
   const nfpm = new Contract(V3.nfpm, V3_NFPM_ABI, wallet);
 
-  const cashcatAllowance = await cashcat.allowance(wallet.address, V3.nfpm);
-  if (cashcatAllowance < amount0Desired) {
-    console.log('  Approving CASHCAT for V3 NFPM...');
-    const tx = await cashcat.approve.populateTransaction(V3.nfpm, MaxUint256);
+  const allowance0 = await t0.allowance(wallet.address, V3.nfpm);
+  if (allowance0 < amount0Desired) {
+    console.log(`  Approving ${symbol.split('/')[0]} for V3 NFPM...`);
+    const tx = await t0.approve.populateTransaction(V3.nfpm, MaxUint256);
     const app = await wallet.sendTransaction(tx);
     await app.wait();
     console.log(`  Approve tx: ${app.hash}`);
   }
-  const wethAllowance = await weth.allowance(wallet.address, V3.nfpm);
-  if (wethAllowance < amount1Desired) {
-    console.log('  Approving WETH for V3 NFPM...');
-    const tx = await weth.approve.populateTransaction(V3.nfpm, MaxUint256);
+  const allowance1 = await t1.allowance(wallet.address, V3.nfpm);
+  if (allowance1 < amount1Desired) {
+    console.log(`  Approving ${symbol.split('/')[1]} for V3 NFPM...`);
+    const tx = await t1.approve.populateTransaction(V3.nfpm, MaxUint256);
     const app = await wallet.sendTransaction(tx);
     await app.wait();
     console.log(`  Approve tx: ${app.hash}`);
   }
 
   const mintParams = {
-    token0: CASHCAT,
-    token1: WETH,
-    fee: 10000,
-    tickLower,
-    tickUpper,
-    amount0Desired,
-    amount1Desired,
-    amount0Min,
-    amount1Min,
+    token0, token1, fee,
+    tickLower, tickUpper,
+    amount0Desired, amount1Desired,
+    amount0Min, amount1Min,
     recipient: wallet.address,
     deadline,
   };
@@ -271,8 +278,9 @@ async function depositV3(provider, wallet, config) {
   }
   console.log(`  Token ID: ${tokenId}`);
 
-  const position = { dex: 'V3', pool: LP_V3_CASHCAT_WETH.symbol, tokenId: tokenId?.toString(),
-    entryTick, tickLower, tickUpper, amount0: amount0Desired.toString(), amount1: amount1Desired.toString(),
+  const position = { dex: 'V3', pool: symbol, tokenId: tokenId?.toString(),
+    token0, token1, fee, entryTick, tickLower, tickUpper,
+    amount0: amount0Desired.toString(), amount1: amount1Desired.toString(),
     block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
   const state = loadState();
   state.positions.push(position);
@@ -284,27 +292,39 @@ async function depositV3(provider, wallet, config) {
 
 // Deposit V4 position via modifyLiquiditiesWithoutUnlock
 // Uses actions: MINT_POSITION=2
-async function depositV4(provider, wallet, config) {
-  console.log('\n=== V4 CASHCAT/USDG 0.269% Deposit ===');
-  if (!config.enableV4CashcatUsdg) { console.log('  SKIPPED (disabled in config)'); return null; }
+export async function depositV4(provider, wallet, config, poolInfo = null) {
+  const useDefault = !poolInfo;
+  const token0 = useDefault ? CASHCAT : poolInfo.currency0;
+  const token1 = useDefault ? USDG : poolInfo.currency1;
+  const symbol = useDefault ? LP_V4_CASHCAT_USDG.symbol
+    : `${poolInfo.baseToken?.symbol || '?'}/${poolInfo.quoteToken?.symbol || '?'}`;
+  const decimals0 = useDefault ? 18 : (poolInfo.decimals0 || 18);
+  const decimals1 = useDefault ? 6 : (poolInfo.decimals1 || 6);
+  const poolKey = useDefault ? LP_V4_CASHCAT_USDG.key : {
+    currency0: poolInfo.currency0, currency1: poolInfo.currency1,
+    fee: poolInfo.fee, tickSpacing: poolInfo.tickSpacing,
+    hooks: poolInfo.hooks || '0x0000000000000000000000000000000000000000',
+  };
 
-  const [sqrtPriceX96BN, currentTickBN] = await getV4Slot0(provider);
+  console.log(`\n=== V4 ${symbol} Deposit ===`);
+  if (useDefault && !config.enableV4CashcatUsdg) { console.log('  SKIPPED (disabled in config)'); return null; }
+
+  const [sqrtPriceX96BN, currentTickBN] = await getV4Slot0(provider, poolKey);
   const sqrtPriceX96 = BigInt(sqrtPriceX96BN);
   const currentTick = Number(currentTickBN);
-  const tickSpacing = LP_V4_CASHCAT_USDG.key.tickSpacing;
+  const tickSpacing = poolKey.tickSpacing;
   const { tickLower, tickUpper } = computeTickRange(currentTick, config.rangeSymmetricPct, tickSpacing);
 
-  const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
-  const usdg = new Contract(USDG, ERC20_ABI, provider);
+  const t0 = new Contract(token0, ERC20_ABI, provider);
+  const t1 = new Contract(token1, ERC20_ABI, provider);
   const walletAddr = wallet?.address || (process.env.PRIVATE_KEY ? new Wallet(process.env.PRIVATE_KEY).address : NATIVE);
-  const cashcatBalance = await cashcat.balanceOf(walletAddr);
-  const usdgBalance = await usdg.balanceOf(walletAddr);
+  const bal0 = await t0.balanceOf(walletAddr);
+  const bal1 = await t1.balanceOf(walletAddr);
   console.log(`  Tick current: ${currentTick}`);
   console.log(`  Range: ${tickLower} → ${tickUpper} (±${config.rangeSymmetricPct}%)`);
-  console.log(`  CASHCAT balance: ${formatEther(cashcatBalance)}`);
-  console.log(`  USDG balance:    ${formatUnits(usdgBalance, 6)}`);
+  console.log(`  ${symbol.split('/')[0]} balance: ${formatUnits(bal0, decimals0)}`);
+  console.log(`  ${symbol.split('/')[1]} balance: ${formatUnits(bal1, decimals1)}`);
 
-  const poolKey = LP_V4_CASHCAT_USDG.key;
   const keyTuple = [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks];
 
   const MINT_POSITION = 2;
@@ -318,30 +338,30 @@ async function depositV4(provider, wallet, config) {
     const initialSqrtP = 1n << 96n;
     sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, initialSqrtP);
     sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, initialSqrtP);
-    const L0 = cashcatBalance * initialSqrtP * sqrtPbX96 / ((sqrtPbX96 - initialSqrtP) * Q96);
-    const L1 = usdgBalance * Q96 / (initialSqrtP - sqrtPaX96);
+    const L0 = bal0 * initialSqrtP * sqrtPbX96 / ((sqrtPbX96 - initialSqrtP) * Q96);
+    const L1 = bal1 * Q96 / (initialSqrtP - sqrtPaX96);
     liquidity = L0 < L1 ? L0 : L1;
-    console.log(`  L0 (CASHCAT-bound): ${L0}`);
-    console.log(`  L1 (USDG-bound):    ${L1}`);
+    console.log(`  L0 (${symbol.split('/')[0]}-bound): ${L0}`);
+    console.log(`  L1 (${symbol.split('/')[1]}-bound): ${L1}`);
     console.log(`  L = ${liquidity}`);
   } else {
     sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, sqrtPriceX96);
     sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, sqrtPriceX96);
-    const L0 = cashcatBalance * sqrtPriceX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPriceX96) * Q96);
-    const L1 = usdgBalance * Q96 / (sqrtPriceX96 - sqrtPaX96);
+    const L0 = bal0 * sqrtPriceX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPriceX96) * Q96);
+    const L1 = bal1 * Q96 / (sqrtPriceX96 - sqrtPaX96);
     liquidity = L0 < L1 ? L0 : L1;
-    const bindingSide = L0 < L1 ? 'CASHCAT' : 'USDG';
-    let expected0 = cashcatBalance, expected1 = usdgBalance;
+    const bindingSide = L0 < L1 ? symbol.split('/')[0] : symbol.split('/')[1];
+    let expected0 = bal0, expected1 = bal1;
     if (liquidity === L0) {
       expected1 = liquidity * (sqrtPriceX96 - sqrtPaX96) / Q96;
     } else {
       expected0 = liquidity * (sqrtPbX96 - sqrtPriceX96) * Q96 / (sqrtPriceX96 * sqrtPbX96);
     }
-    console.log(`  L0 (CASHCAT-bound): ${L0}`);
-    console.log(`  L1 (USDG-bound):    ${L1}`);
+    console.log(`  L0 (${symbol.split('/')[0]}-bound): ${L0}`);
+    console.log(`  L1 (${symbol.split('/')[1]}-bound): ${L1}`);
     console.log(`  L = ${liquidity} (${bindingSide}-constrained)`);
-    console.log(`  Expected CASHCAT used: ${formatEther(expected0)}`);
-    console.log(`  Expected USDG used:    ${formatUnits(expected1, 6)}`);
+    console.log(`  Expected ${symbol.split('/')[0]} used: ${formatUnits(expected0, decimals0)}`);
+    console.log(`  Expected ${symbol.split('/')[1]} used: ${formatUnits(expected1, decimals1)}`);
   }
   const amount0Max = (1n << 128n) - 1n;
   const amount1Max = (1n << 128n) - 1n;
@@ -375,7 +395,8 @@ async function depositV4(provider, wallet, config) {
   ], wallet);
 
   // Approve NFPM + Permit2 for BOTH tokens
-  for (const [token, label, decimals] of [[CASHCAT, 'CASHCAT', 18], [USDG, 'USDG', 6]]) {
+  for (const [token, decimals] of [[token0, decimals0], [token1, decimals1]]) {
+    const label = token === token0 ? symbol.split('/')[0] : symbol.split('/')[1];
     const t = new Contract(token, ERC20_ABI, wallet);
     const bal = await t.balanceOf(wallet.address);
     if (bal === 0n) continue;
@@ -436,7 +457,10 @@ async function depositV4(provider, wallet, config) {
     }
     console.log(`  Token ID: ${tokenId}`);
 
-    const position = { dex: 'V4', pool: LP_V4_CASHCAT_USDG.symbol, tokenId, entryTick: currentTick, tickLower, tickUpper, block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
+    const position = { dex: 'V4', pool: symbol, tokenId, entryTick: currentTick, tickLower, tickUpper,
+      currency0: poolKey.currency0, currency1: poolKey.currency1, fee: poolKey.fee,
+      tickSpacing: poolKey.tickSpacing, hooks: poolKey.hooks, poolId: computeV4PoolId(poolKey),
+      liquidity: liquidity.toString(), block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
     const state = loadState();
     state.positions.push(position);
     saveState(state);
