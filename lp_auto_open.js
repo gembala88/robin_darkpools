@@ -204,9 +204,9 @@ function checkGovernance(uniqueToken) {
 // Gates:
 //   1. Trend growth (replaces old score >= 60):
 //      - trend must be UP (linear regression, >2% per cycle)
-//      - score >= 25 — token dengan trend naik TAPI skor
+//      - score >= 15 — token dengan trend naik TAPI skor
 //        sedang tetap boleh lolos
-//   2. HHI done and < 2500
+//   2. HHI done and < 7000
 //   3. GMGN done and clean
 //   4. TVL >= $100k
 //   5. Governance
@@ -214,11 +214,11 @@ export async function checkAutoOpenConditions(po) {
   // Gate 1: Growth trend (replaces score >= 60)
   const trend = computeTrend(po);
   if (trend.direction !== 'up') return { pass: false, reason: `trend ${trend.direction} (${trend.slopePct}%/cycle) — need UP` };
-  if ((po.score || 0) < 25) return { pass: false, reason: `score ${po.score} < 25` };
+  if ((po.score || 0) < 15) return { pass: false, reason: `score ${po.score} < 15` };
 
-  // Gate 2: HHI done and < 4000
+  // Gate 2: HHI done and < 7000
   if (!po.hhiData || po.hhiData.hhi === undefined) return { pass: false, reason: 'HHI not checked' };
-  if (po.hhiData.hhi >= 4000) return { pass: false, reason: `HHI ${po.hhiData.hhi} >= 4000` };
+  if (po.hhiData.hhi >= 7000) return { pass: false, reason: `HHI ${po.hhiData.hhi} >= 7000` };
 
   // Gate 3: GMGN done and clean
   if (!po.gmgnChecked) return { pass: false, reason: 'GMGN not checked' };
