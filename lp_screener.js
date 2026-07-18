@@ -884,15 +884,18 @@ async function evaluatePools() {
       notified++;
     }
 
-    // Auto-open dry-run (Phase 1):
-    // Gates: trend UP, score >= 40, HHI < 2500, GMGN clean, TVL >= $20k, governance OK
+    // Auto-open (Phase 2):
+    // Gates: trend UP, score >= 35, HHI < 2500, GMGN clean, TVL >= $20k, governance OK
+    // Exec provider: LP_EXEC_RPC_URL (terpisah dari LP_SCREENER_RPC_URL untuk discovery)
     if (po.score >= 40 && po.hhiData?.hhi !== undefined && po.hhiData.hhi < 2500 &&
         po.gmgnChecked && (!po.gmgnFlags || po.gmgnFlags.length === 0) &&
         po.tvlUsd >= 20000) {
       const ao = await checkAutoOpenConditions(po);
       if (ao.pass) {
-        const lpProv = await makeProvider('LP_SCREENER_RPC_URL').catch(() => null);
-        await autoOpenExecute(po, lpProv);
+        const execProv = await (process.env.LP_EXEC_RPC_URL
+          ? makeProvider('LP_EXEC_RPC_URL')
+          : makeProvider('LP_SCREENER_RPC_URL')).catch(() => null);
+        await autoOpenExecute(po, execProv);
       } else {
         console.log(`  [auto-open BLOCKED] ${po.baseToken?.symbol || '?'}: ${ao.reason}`);
       }
