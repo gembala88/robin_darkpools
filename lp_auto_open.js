@@ -18,7 +18,7 @@ import { ERC20_ABI, V3_SWAP_ROUTER_ABI, V3_QUOTERV2_ABI, V3_NFPM_ABI, V4_NFPM_AB
 import { tgScreener } from './telegram.js';
 import { depositV3, depositV4, loadState as loadLpState, saveState as saveLpState } from './lp_deposit.js';
 
-const AUTO_OPEN_DRY = 1; // Phase 1: default dry-run. Set 0 only after user review.
+const AUTO_OPEN_DRY = 0; // Phase 2: real execution after user review
 
 // Trusted known tokens for swap routing
 const WETH_ADDR = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
