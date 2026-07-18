@@ -6,7 +6,7 @@ import { V3, V4, V4_NFPM, LP_V3_CASHCAT_WETH } from './config.js';
 import { V3_NFPM_ABI, ERC20_ABI } from './abis.js';
 import { UC } from './config.js';
 import { tg } from './telegram.js';
-import { withdrawV3, withdrawV4 } from './lp_withdraw.js';
+import { withdrawV3, withdrawV4, swapBackAfterWithdraw } from './lp_withdraw.js';
 
 const abi = AbiCoder.defaultAbiCoder();
 const STATE_FILE = new URL('./lp_state.json', import.meta.url);
@@ -154,7 +154,17 @@ async function checkV3(provider, entry, config) {
         const feeLine = wdResult?.fee0 ? `<code>${wdResult.fee0} ${wdResult.sym0} + ${wdResult.fee1} ${wdResult.sym1}</code>` : '';
         await tg(`\u{2705} AUTO-CLOSED #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
           `${feeLine ? `Fees collected: ${feeLine}\n` : ''}` +
-          `Lihat wallet untuk hasil withdraw.`).catch(() => {});
+          `Mulai swap-back token ke ETH...`).catch(() => {});
+
+        // Auto swap-back (otomatis, tanpa flag SWAP_BACK)
+        if (wdResult?.token0 && wdResult?.token1) {
+          const swapResult = await swapBackAfterWithdraw(provider, wallet, [wdResult.token0, wdResult.token1], config, true);
+          result.swapBack = swapResult;
+          if (swapResult?.summary) {
+            await tg(`\u{1F504} Swap-back #${entry.tokenId}: ${swapResult.summary}` +
+              (swapResult.failed?.length ? `\n\u{26A0}\u{FE0F} Gagal: ${swapResult.failedSymbols?.join(', ') || swapResult.failed.join(', ')}` : '')).catch(() => {});
+          }
+        }
       } catch (e) {
         const errMsg = e.shortMessage || e.message || String(e);
         result.autoCloseFailed = errMsg;
@@ -267,10 +277,20 @@ async function checkV4(provider, entry, config) {
       const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
       await tg(`\u{1F534} AUTO-CLOSING V4 position #${entry.tokenId}\nIL: ${ilPct.toFixed(2)}%`).catch(() => {});
       try {
-        await withdrawV4(provider, wallet, config, entry.tokenId);
+        const wdResult = await withdrawV4(provider, wallet, config, entry.tokenId);
         result.autoClosed = true;
         await tg(`\u{2705} AUTO-CLOSED V4 #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
-          `Lihat wallet untuk hasil withdraw.`).catch(() => {});
+          `Mulai swap-back token ke ETH...`).catch(() => {});
+
+        // Auto swap-back (otomatis, tanpa flag SWAP_BACK)
+        if (wdResult?.token0 && wdResult?.token1) {
+          const swapResult = await swapBackAfterWithdraw(provider, wallet, [wdResult.token0, wdResult.token1], config, true);
+          result.swapBack = swapResult;
+          if (swapResult?.summary) {
+            await tg(`\u{1F504} Swap-back V4 #${entry.tokenId}: ${swapResult.summary}` +
+              (swapResult.failed?.length ? `\n\u{26A0}\u{FE0F} Gagal: ${swapResult.failedSymbols?.join(', ') || swapResult.failed.join(', ')}` : '')).catch(() => {});
+          }
+        }
       } catch (e) {
         const errMsg = e.shortMessage || e.message || String(e);
         result.autoCloseFailed = errMsg;

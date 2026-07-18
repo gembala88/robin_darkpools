@@ -239,11 +239,11 @@ export async function withdrawV4(provider, wallet, config, tokenId = null) {
 }
 
 // ===== SWAP-BACK TOKENS TO ETH =====
-async function swapBackAfterWithdraw(provider, wallet, tokens, config) {
-  const doSwap = process.env.SWAP_BACK === '1';
+export async function swapBackAfterWithdraw(provider, wallet, tokens, config, forceSwap = false) {
+  const doSwap = forceSwap || process.env.SWAP_BACK === '1';
   if (!doSwap) {
-    console.log('\n=== Swap-back to ETH: SKIPPED (set SWAP_BACK=1 to enable) ===');
-    return;
+    console.log('\n=== Swap-back to ETH: SKIPPED (set SWAP_BACK=1 or forceSwap=true to enable) ===');
+    return { skipped: true };
   }
   console.log('\n=== Swap-back to ETH ===');
 
@@ -251,6 +251,8 @@ async function swapBackAfterWithdraw(provider, wallet, tokens, config) {
   const SWAP_ROUTER = V3.swapRouter02;
   const QUOTER = V3.quoterV2;
   const addr = wallet?.address || (process.env.PRIVATE_KEY ? new Wallet(process.env.PRIVATE_KEY).address : NATIVE);
+  const ethBefore = wallet ? await provider.getBalance(addr) : 0n;
+  const swapped = [];
   const failed = [];
 
   for (const token of tokens) {
@@ -259,9 +261,13 @@ async function swapBackAfterWithdraw(provider, wallet, tokens, config) {
       continue;
     }
     const t = new Contract(token, ERC20_ABI, provider);
-    const bal = await t.balanceOf(addr);
+    const [bal, sym, dec] = await Promise.all([
+      t.balanceOf(addr),
+      t.symbol().catch(() => token.slice(0, 10)),
+      t.decimals().catch(() => 18),
+    ]);
     if (bal === 0n) {
-      console.log(`  ${token.slice(0, 10)}: balance 0, skip`);
+      console.log(`  ${sym}: balance 0, skip`);
       continue;
     }
     // Try multiple V3 fee tiers: 0.01%, 0.05%, 0.3%, 1%
@@ -279,12 +285,12 @@ async function swapBackAfterWithdraw(provider, wallet, tokens, config) {
       } catch { /* try next fee tier */ }
     }
     if (!fee) {
-      console.log(`  ${token.slice(0, 10)}: no pool found in any fee tier, skip`);
-      failed.push(token);
+      console.log(`  ${sym}: no pool found in any fee tier, skip`);
+      failed.push({ token, sym });
       continue;
     }
     const amountOutMin = amountOut - (amountOut * BigInt(config.slippagePct)) / 100n;
-    console.log(`  ${token.slice(0, 10)} → WETH: ${formatEther(bal)} → ${formatEther(amountOut)} (fee=${fee}, min ${formatEther(amountOutMin)})`);
+    console.log(`  ${sym} → WETH: ${formatUnits(bal, dec)} → ${formatEther(amountOut)} (fee=${fee}, min ${formatEther(amountOutMin)})`);
 
     if (!wallet) continue; // DRY: skip the rest, next token
 
@@ -292,7 +298,7 @@ async function swapBackAfterWithdraw(provider, wallet, tokens, config) {
     const tw = new Contract(token, ERC20_ABI, wallet);
     const allowance = await tw.allowance(wallet.address, SWAP_ROUTER);
     if (allowance < bal) {
-      console.log(`    Approving ${token.slice(0, 10)} for SwapRouter...`);
+      console.log(`    Approving ${sym} for SwapRouter...`);
       const appTx = await tw.approve(SWAP_ROUTER, MaxUint256);
       await appTx.wait();
       console.log(`    Approve tx: ${appTx.hash}`);
@@ -309,31 +315,47 @@ async function swapBackAfterWithdraw(provider, wallet, tokens, config) {
       console.log(`    Swap tx: ${tx.hash}`);
       const rc = await tx.wait();
       console.log(`    Status: ${rc.status === 1 ? 'OK' : 'FAIL'}`);
+      if (rc.status === 1) swapped.push({ sym, token, amountIn: formatUnits(bal, dec), amountOutWeth: formatEther(amountOut), tx: tx.hash });
     } catch (e) {
       console.log(`    Swap FAILED: ${e.shortMessage || e.message}`);
-      failed.push(token);
+      failed.push({ token, sym });
     }
   }
 
   // Unwrap WETH → ETH
+  const result = { swapped, failed, skipped: false };
   const wethC = new Contract(WETH, [...ERC20_ABI, 'function withdraw(uint256)'], wallet || provider);
   const wethBal = await wethC.balanceOf(addr);
   console.log(`\n  WETH balance: ${formatEther(wethBal)}`);
+  let ethBal = null;
   if (wethBal > 0n && wallet) {
     console.log('  Unwrapping WETH → ETH...');
     const unwrapTx = await wethC.withdraw(wethBal);
     await unwrapTx.wait();
     console.log(`  Unwrap tx: ${unwrapTx.hash}`);
-    const ethBal = await provider.getBalance(wallet.address);
+    ethBal = await provider.getBalance(wallet.address);
     console.log(`  Final ETH balance: ${formatEther(ethBal)}`);
+    result.unwrapTx = unwrapTx.hash;
   } else if (wethBal > 0n) {
     console.log('  DRY: would unwrap WETH → ETH');
   }
+  result.ethFromUnwrap = formatEther(wethBal);
+
+  if (swapped.length > 0 || ethBal !== null) {
+    const ethDelta = wallet ? formatEther(await provider.getBalance(addr) - ethBefore) : '?';
+    result.ethDelta = ethDelta;
+    result.summary = `Swapped ${swapped.length} token(s) → +${ethDelta} ETH`;
+  } else {
+    result.summary = 'No tokens swapped';
+  }
 
   if (failed.length > 0) {
-    console.log(`\n  ⚠️ ${failed.length} token(s) swap failed: ${failed.map(t => t.slice(0, 10)).join(', ')}`);
+    result.failedSymbols = failed.map(t => t.sym || t.token?.slice(0, 10));
+    console.log(`\n  ⚠️ ${failed.length} token(s) swap failed: ${result.failedSymbols.join(', ')}`);
+    result.summary += `, ${failed.length} token(s) gagal`;
   }
-  console.log('  Swap-back complete.');
+  console.log(`  Swap-back complete. ${result.summary}`);
+  return result;
 }
 
 async function main() {
