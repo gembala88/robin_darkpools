@@ -747,10 +747,10 @@ function passesFilters(po) {
 async function checkPoolGMGN(po) {
   if (po.gmgnChecked) return;
   const tokenAddr = po.baseToken?.address;
-  if (!tokenAddr) return;
+  if (!tokenAddr) { po.gmgnChecked = true; return; }
   const g = await checkGMGN(tokenAddr);
+  po.gmgnChecked = true;
   if (g) {
-    po.gmgnChecked = true;
     po.gmgnFlags = g.flags;
   }
 }
@@ -853,8 +853,8 @@ async function evaluatePools() {
       await checkPoolGMGN(po);
     }
 
-    // HHI / LP concentration check for candidate pools (once per pool, TVL > $50K)
-    if (po.score >= (cfgSc('minCandidateScore') || 35) && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 50000) {
+    // HHI / LP concentration check for candidate pools (once per pool, TVL > $20K)
+    if (po.score >= (cfgSc('minCandidateScore') || 35) && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 20000) {
       try {
         const isV4 = (po.labels || []).some(l => l.toLowerCase() === 'v4');
         const poolAddr = lc(po.pairAddress);
@@ -881,18 +881,15 @@ async function evaluatePools() {
     }
 
     // Auto-open dry-run (Phase 1):
-    // Gates: trend UP, score >= 40, HHI < 2500, GMGN clean, TVL >= $100k, governance OK
+    // Gates: trend UP, score >= 40, HHI < 2500, GMGN clean, TVL >= $20k, governance OK
     if (po.score >= 40 && po.hhiData?.hhi !== undefined && po.hhiData.hhi < 2500 &&
         po.gmgnChecked && (!po.gmgnFlags || po.gmgnFlags.length === 0) &&
-        po.tvlUsd >= 100000) {
+        po.tvlUsd >= 20000) {
       const ao = await checkAutoOpenConditions(po);
       if (ao.pass) {
         await autoOpenDryRun(po);
       } else {
-        // Log why it was blocked (useful for observing mature pools like CASHCAT)
-        if (ao.reason?.startsWith('trend')) {
-          console.log(`  [auto-open BLOCKED] ${po.baseToken?.symbol || '?'}: ${ao.reason}`);
-        }
+        console.log(`  [auto-open BLOCKED] ${po.baseToken?.symbol || '?'}: ${ao.reason}`);
       }
     }
     scored++;

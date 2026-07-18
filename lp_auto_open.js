@@ -182,8 +182,8 @@ export async function checkAutoOpenConditions(po) {
   if (!po.gmgnChecked) return { pass: false, reason: 'GMGN not checked' };
   if (po.gmgnFlags && po.gmgnFlags.length > 0) return { pass: false, reason: `GMGN flagged: ${po.gmgnFlags.join(', ')}` };
 
-  // Gate 4: TVL >= $100k
-  if ((po.tvlUsd || 0) < 100000) return { pass: false, reason: `TVL $${(po.tvlUsd || 0).toLocaleString()} < $100k` };
+  // Gate 4: TVL >= $20k (trend gate is primary filter, not TVL size)
+  if ((po.tvlUsd || 0) < 20000) return { pass: false, reason: `TVL $${(po.tvlUsd || 0).toLocaleString()} < $20k` };
 
   // Gate 5: Governance
   const uniqueToken = po.baseToken?.address;
