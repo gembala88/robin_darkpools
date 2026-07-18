@@ -80,6 +80,48 @@ export async function enrichPoolData(po, provider) {
   };
 }
 
+// ===== TREND HISTORY =====
+// Stores TVL/volume snapshots per pool (max 12 = 1hr at 5-min cycles)
+const MAX_HISTORY = 12;
+
+export function recordTrendSnapshot(po) {
+  if (!po.trendHistory) po.trendHistory = [];
+  po.trendHistory.push({
+    time: Date.now(),
+    tvlUsd: po.tvlUsd || 0,
+    volume24h: po.volume24h || 0,
+  });
+  if (po.trendHistory.length > MAX_HISTORY) {
+    po.trendHistory = po.trendHistory.slice(-MAX_HISTORY);
+  }
+}
+
+// Linear regression slope on TVL, returns % change per cycle
+export function computeTrend(po) {
+  const h = po.trendHistory;
+  if (!h || h.length < 4) return { direction: 'neutral', slopePct: 0, reason: `< 4 data points` };
+
+  const N = h.length;
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  const meanY = h.reduce((s, p) => s + p.tvlUsd, 0) / N;
+  if (meanY === 0) return { direction: 'neutral', slopePct: 0, reason: 'zero TVL' };
+
+  for (let i = 0; i < N; i++) {
+    sumX += i;
+    sumY += h[i].tvlUsd;
+    sumXY += i * h[i].tvlUsd;
+    sumX2 += i * i;
+  }
+  const slope = (N * sumXY - sumX * sumY) / (N * sumX2 - sumX * sumX);
+  const slopePct = (slope / meanY) * 100;
+
+  let direction = 'flat';
+  if (slopePct > 2.0) direction = 'up';
+  else if (slopePct < -2.0) direction = 'down';
+
+  return { direction, slopePct: Math.round(slopePct * 100) / 100 };
+}
+
 // ===== GOVERNANCE CHECK =====
 // Mirrors lp_deposit.js rules: max positions + token dedup
 function checkGovernance(uniqueToken) {
@@ -114,12 +156,23 @@ function checkGovernance(uniqueToken) {
   return { pass: true };
 }
 
-// ===== AUTO-OPEN CONDITIONS (all 5 gates) =====
+// ===== AUTO-OPEN CONDITIONS =====
+// Gates:
+//   1. Trend growth (replaces old score >= 60):
+//      - trend must be UP (linear regression, >2% per cycle)
+//      - score >= 40 (minCandidateScore) — token dengan trend naik TAPI skor
+//        sedang tetap boleh lolos
+//   2. HHI done and < 2500
+//   3. GMGN done and clean
+//   4. TVL >= $100k
+//   5. Governance
 export async function checkAutoOpenConditions(po) {
   if (AUTO_OPEN_DRY !== 1) return { pass: false, reason: 'auto-open disabled in config' };
 
-  // Gate 1: Score >= 60
-  if ((po.score || 0) < 60) return { pass: false, reason: `score ${po.score} < 60` };
+  // Gate 1: Growth trend (replaces score >= 60)
+  const trend = computeTrend(po);
+  if (trend.direction !== 'up') return { pass: false, reason: `trend ${trend.direction} (${trend.slopePct}%/cycle) — need UP` };
+  if ((po.score || 0) < 40) return { pass: false, reason: `score ${po.score} < 40` };
 
   // Gate 2: HHI done and < 2500
   if (!po.hhiData || po.hhiData.hhi === undefined) return { pass: false, reason: 'HHI not checked' };
@@ -148,6 +201,7 @@ export async function autoOpenDryRun(po) {
   const q = po.quoteToken;
   const ver = po.labels?.join('/') || po.version || '?';
   const sym = `${b?.symbol || '?'}/${q?.symbol || '?'} (${ver})`;
+  const trend = computeTrend(po);
 
   const msg = [
     `⚡ <b>AUTO-OPEN (DRY)</b> — ${sym}`,
@@ -157,6 +211,7 @@ export async function autoOpenDryRun(po) {
     ``,
     `🏅 Score: ${po.score}/100`,
     `💰 TVL: $${(po.tvlUsd || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`,
+    `📈 Trend: ${trend.direction === 'up' ? 'RISING' : 'FLAT'} (${trend.slopePct}%/cycle)`,
     `📊 HHI: ${po.hhiData?.hhi}`,
     `✅ GMGN: clean`,
     `✅ Governance: OK`,
@@ -165,7 +220,7 @@ export async function autoOpenDryRun(po) {
   ].join('\n');
 
   console.log(`\n>>> AUTO-OPEN (DRY): ${sym}`);
-  console.log(`    pool=${po.pairAddress}  score=${po.score}  tvl=$${(po.tvlUsd || 0).toLocaleString()}  hhi=${po.hhiData?.hhi}  gmgn=clean  gov=OK`);
+  console.log(`    pool=${po.pairAddress}  score=${po.score}  tvl=$${(po.tvlUsd || 0).toLocaleString()}  hhi=${po.hhiData?.hhi}  trend=${trend.direction}(${trend.slopePct}%/cyc)  gmgn=clean  gov=OK`);
 
   await tgScreener(msg).catch(() => {});
 }

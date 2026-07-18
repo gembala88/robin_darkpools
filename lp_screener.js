@@ -5,7 +5,7 @@ import { UC } from './config.js';
 import { tgScreener } from './telegram.js';
 import { checkGMGN } from './gmgn.js';
 import { makeProvider } from './provider.js';
-import { autoOpenDryRun, checkAutoOpenConditions, enrichPoolData } from './lp_auto_open.js';
+import { autoOpenDryRun, checkAutoOpenConditions, enrichPoolData, recordTrendSnapshot } from './lp_auto_open.js';
 
 const DEXSCREENER_PROFILES = 'https://api.dexscreener.com/token-profiles/latest/v1';
 const DEXSCREENER_BOOSTS = 'https://api.dexscreener.com/token-boosts/latest/v1';
@@ -838,6 +838,9 @@ async function evaluatePools() {
   for (const [key, po] of entries) {
     if (!po.tvlUsd && !po.volume24h) continue; // no data yet
 
+    // Record TVL/volume snapshot for growth trend tracking
+    recordTrendSnapshot(po);
+
     const { score, breakdown, volTvlRatio } = computeScore(po);
     po.score = score;
     po._scoreBreakdown = breakdown;
@@ -878,14 +881,18 @@ async function evaluatePools() {
     }
 
     // Auto-open dry-run (Phase 1):
-    // All 5 gates must pass: score >= 60, HHI done & < 2500, GMGN done & clean,
-    // TVL >= $100k, governance OK
-    if (po.score >= 60 && po.hhiData?.hhi !== undefined && po.hhiData.hhi < 2500 &&
+    // Gates: trend UP, score >= 40, HHI < 2500, GMGN clean, TVL >= $100k, governance OK
+    if (po.score >= 40 && po.hhiData?.hhi !== undefined && po.hhiData.hhi < 2500 &&
         po.gmgnChecked && (!po.gmgnFlags || po.gmgnFlags.length === 0) &&
         po.tvlUsd >= 100000) {
       const ao = await checkAutoOpenConditions(po);
       if (ao.pass) {
         await autoOpenDryRun(po);
+      } else {
+        // Log why it was blocked (useful for observing mature pools like CASHCAT)
+        if (ao.reason?.startsWith('trend')) {
+          console.log(`  [auto-open BLOCKED] ${po.baseToken?.symbol || '?'}: ${ao.reason}`);
+        }
       }
     }
     scored++;
