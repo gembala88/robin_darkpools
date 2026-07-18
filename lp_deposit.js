@@ -24,8 +24,12 @@ const STABLE_OR_WRAPPED = new Set([WETH.toLowerCase(), USDG.toLowerCase()]);
 
 // Extract the unique (non-stable) token address from a saved position
 function positionUniqueToken(pos) {
-  if (pos.dex === 'V3' && pos.pool === LP_V3_CASHCAT_WETH.symbol) return LP_V3_CASHCAT_WETH.token0;
-  if (pos.dex === 'V4' && pos.pool === LP_V4_CASHCAT_USDG.symbol) return LP_V4_CASHCAT_USDG.key.currency0;
+  const tokens = pos.dex === 'V3' ? [pos.token0, pos.token1]
+    : pos.dex === 'V4' ? [pos.currency0, pos.currency1]
+    : [];
+  for (const t of tokens) {
+    if (t && !STABLE_OR_WRAPPED.has(t.toLowerCase())) return t;
+  }
   return null;
 }
 

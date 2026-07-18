@@ -11,6 +11,8 @@
 //   autoOpenExecute(po)   — execute swap + deposit (Phase 2)
 
 import 'dotenv/config';
+import fs from 'node:fs';
+import path from 'node:path';
 import { Contract, Wallet, parseEther, formatEther, formatUnits, MaxUint256, AbiCoder } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, V4, V4_NFPM, NATIVE, UC } from './config.js';
@@ -211,6 +213,10 @@ function checkGovernance(uniqueToken) {
 //   4. TVL >= $100k
 //   5. Governance
 export async function checkAutoOpenConditions(po) {
+  // Gate 0: Pause flag (set via Telegram /pause)
+  const pauseFile = path.join(process.cwd(), 'auto_open_paused.flag');
+  if (fs.existsSync(pauseFile)) return { pass: false, reason: 'auto-open paused via /pause' };
+
   // Gate 1: Growth trend (replaces score >= 60)
   const trend = computeTrend(po);
   if (trend.direction !== 'up') return { pass: false, reason: `trend ${trend.direction} (${trend.slopePct}%/cycle) — need UP` };
