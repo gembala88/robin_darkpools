@@ -5,7 +5,7 @@ import { UC } from './config.js';
 import { tgScreener } from './telegram.js';
 import { checkGMGN } from './gmgn.js';
 import { makeProvider } from './provider.js';
-import { autoOpenDryRun, checkAutoOpenConditions, enrichPoolData, recordTrendSnapshot } from './lp_auto_open.js';
+import { autoOpenExecute, checkAutoOpenConditions, enrichPoolData, recordTrendSnapshot } from './lp_auto_open.js';
 
 const DEXSCREENER_PROFILES = 'https://api.dexscreener.com/token-profiles/latest/v1';
 const DEXSCREENER_BOOSTS = 'https://api.dexscreener.com/token-boosts/latest/v1';
@@ -888,7 +888,7 @@ async function evaluatePools() {
       const ao = await checkAutoOpenConditions(po);
       if (ao.pass) {
         const lpProv = await makeProvider('LP_SCREENER_RPC_URL').catch(() => null);
-        await autoOpenDryRun(po, lpProv);
+        await autoOpenExecute(po, lpProv);
       } else {
         console.log(`  [auto-open BLOCKED] ${po.baseToken?.symbol || '?'}: ${ao.reason}`);
       }

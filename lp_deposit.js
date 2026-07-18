@@ -82,15 +82,15 @@ const ERROR_MAP = {
   '0x3b99b53d': 'SliceOutOfBounds()',
 };
 
-function loadState() {
+export function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { positions: [] }; }
 }
-function saveState(s) {
+export function saveState(s) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(s, (k, v) => typeof v === 'bigint' ? v.toString() : v, 2));
 }
 
 // Compute V4 poolId = keccak256(abi.encode(PoolKey))
-function computeV4PoolId(key) {
+export function computeV4PoolId(key) {
   return keccak256(abi.encode(
     ['tuple(address,address,uint24,int24,address)'],
     [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]]
@@ -122,7 +122,7 @@ async function getV4Tick(provider) {
 
 // Compute sqrtPriceX96 at a given tick RELATIVE to current tick+sqrtPrice.
 // Uses 1.0001^((tick - currentTick)/2) * sqrtPriceX96 — safe for |diff| < ~10k.
-function sqrtPriceAtTick(tick, currentTick, currentSqrtPriceX96) {
+export function sqrtPriceAtTick(tick, currentTick, currentSqrtPriceX96) {
   const diff = tick - currentTick;
   if (diff === 0) return currentSqrtPriceX96;
   const Q96 = 1n << 96n;
@@ -133,7 +133,7 @@ function sqrtPriceAtTick(tick, currentTick, currentSqrtPriceX96) {
 // Compute tick range SYMMETRIC around current tick:
 //   tickLower = currentTick - rangePct%
 //   tickUpper = currentTick + rangePct%
-function computeTickRange(currentTick, symmetricPct, tickSpacing) {
+export function computeTickRange(currentTick, symmetricPct, tickSpacing) {
   const halfRangeTicks = Math.floor(Math.log(1 + symmetricPct / 100) / Math.log(1.0001));
   const halfRangeAligned = Math.ceil(halfRangeTicks / tickSpacing) * tickSpacing;
   const tickLower = Math.floor(currentTick / tickSpacing) * tickSpacing - halfRangeAligned;
@@ -143,7 +143,7 @@ function computeTickRange(currentTick, symmetricPct, tickSpacing) {
 
 // Two-sided liquidity: min(L0, L1) using standard V3 formula.
 // amount0 = CASHCAT, amount1 = WETH.
-function computeLiquidity(amount0, amount1, sqrtPriceX96, currentTick, tickLower, tickUpper) {
+export function computeLiquidity(amount0, amount1, sqrtPriceX96, currentTick, tickLower, tickUpper) {
   const sqrtPX96 = BigInt(sqrtPriceX96);
   const sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, sqrtPX96);
   const sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, sqrtPX96);
