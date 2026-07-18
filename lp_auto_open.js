@@ -170,10 +170,33 @@ export function computeTrend(po) {
 
 // ===== GOVERNANCE CHECK =====
 // Mirrors lp_deposit.js rules: max positions + token dedup
+let _govCheckCount = 0;
+async function _crossCheckOnchain(positions) {
+  const walletAddr = process.env.WALLET_ADDRESS;
+  if (!walletAddr) return;
+  try {
+    const prov = await makeProvider('LP_SCREENER_RPC_URL');
+    const v3Nfpm = new Contract(V3.nfpm, ['function balanceOf(address) view returns (uint256)'], prov);
+    const v4Nfpm = new Contract(V4_NFPM, ['function balanceOf(address) view returns (uint256)'], prov);
+    const [v3Bal, v4Bal] = await Promise.all([
+      v3Nfpm.balanceOf(walletAddr),
+      v4Nfpm.balanceOf(walletAddr),
+    ]);
+    const onchain = Number(v3Bal) + Number(v4Bal);
+    const stateLen = positions.length;
+    if (onchain !== stateLen) {
+      console.warn(`\n⚠️ ON-CHAIN NFT COUNT MISMATCH: NFPM balanceOf=${onchain}, state.positions.length=${stateLen}. State mungkin tidak sinkron, periksa lp_state.json.\n`);
+    }
+  } catch {}
+}
 function checkGovernance(uniqueToken) {
   const lpState = loadLpState();
   const positions = lpState.positions || [];
   const MAX = Number(process.env.MAX_LP_POSITIONS || 3);
+
+  // On-chain cross-check (fire-and-forget, setiap ~20 panggilan)
+  _govCheckCount++;
+  if (_govCheckCount % 20 === 0) _crossCheckOnchain(positions);
 
   if (positions.length >= MAX) {
     return { pass: false, reason: `max positions (${positions.length}/${MAX})` };

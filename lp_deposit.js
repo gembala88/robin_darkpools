@@ -5,6 +5,7 @@
 
 import 'dotenv/config';
 import fs from 'node:fs';
+import path from 'node:path';
 import { Contract, Wallet, parseEther, formatEther, formatUnits, MaxUint256, AbiCoder, keccak256 } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, V4, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG, NATIVE } from './config.js';
@@ -586,4 +587,7 @@ async function main() {
   if (!wallet) console.log('\nDRY-RUN complete. To execute: DRY=0 PRIVATE_KEY=0x.. node lp_deposit.js');
 }
 
-main().catch(e => { console.error('FAILED:', e.shortMessage || e.message); process.exit(1); });
+const isMain = process.argv[1] && path.basename(process.argv[1]) === path.basename(new URL(import.meta.url).pathname);
+if (isMain) {
+  main().catch(e => { console.error('FAILED:', e.shortMessage || e.message); process.exit(1); });
+}
