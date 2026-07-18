@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { Contract, Interface, id as topicId, getAddress, formatEther, AbiCoder } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V4, UC, UCW, UCS } from './config.js';
-import { tg, tgScreener, setCommandCtx, startCommandHandler } from './telegram.js';
+import { tg, tgScreener } from './telegram.js';
 import { analyzeToken } from './llm.js';
 import { checkGMGN } from './gmgn.js';
 
@@ -798,21 +798,7 @@ async function main() {
     state.lastScannedBlock = currentHead;
   }
 
-  // Wire up Telegram command context
-  setCommandCtx({
-    getTokens: () => state.tokens,
-    getHead: () => currentHead,
-    getUptime: () => {
-      const s = Math.floor((Date.now() - startTime) / 1000);
-      const h = Math.floor(s / 3600);
-      const m = Math.floor((s % 3600) / 60);
-      return `${h}h ${m}m`;
-    },
-    getCfg: () => CFG,
-  });
-
-  // Start command handler in background
-  startCommandHandler().catch(e => console.error('cmdHandler error:', e.message));
+  // (Telegram command handling migrated to telegram_bot.js — separate process)
 
   // Initial scan (checkpointed, progress-logged, rate-limit safe)
   const startBlock = state.lastScannedBlock > 0 ? state.lastScannedBlock + 1 : 0;

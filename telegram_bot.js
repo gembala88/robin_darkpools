@@ -7,6 +7,7 @@ import { makeProvider } from './provider.js';
 const TOKEN = process.env.SCREENER_BOT_TOKEN;
 const PAUSE_FLAG = path.join(process.cwd(), 'auto_open_paused.flag');
 const LP_STATE = new URL('./lp_state.json', import.meta.url);
+const SCREENER_STATE = new URL('./screener_state.json', import.meta.url);
 
 let lastUpdateId = 0;
 let commandRunning = false;
@@ -82,6 +83,32 @@ async function cmdResume(chatId) {
   }
 }
 
+async function cmdScreener(chatId) {
+  let data;
+  try { data = JSON.parse(fs.readFileSync(SCREENER_STATE, 'utf8')); } catch { data = null; }
+  if (!data || !data.tokens) {
+    await sendMsg(chatId, 'Screener state not available yet. Tunggu screener berjalan.');
+    return;
+  }
+  const tokens = Object.values(data.tokens);
+  const total = tokens.length;
+  const active = tokens.filter(t => t.lastActive).length;
+  const passed = tokens.filter(t => t.passedCriteria).length;
+  const eligible = tokens.filter(t => t.notified).length;
+  const head = data.lastScannedBlock || '?';
+
+  const lines = [
+    '<b>\u{1F50D} Screener Overview</b>',
+    '',
+    `Tokens tracked: ${total}`,
+    `Active (curve exists): ${active}`,
+    `Passing criteria: ${passed}`,
+    `Eligible for pool: ${eligible}`,
+    `Chain head: ${head}`,
+  ];
+  await sendMsg(chatId, lines.join('\n'));
+}
+
 async function handleCommand(text, chatId) {
   const cmd = text.split(/\s+/)[0].toLowerCase();
   switch (cmd) {
@@ -89,9 +116,10 @@ async function handleCommand(text, chatId) {
     case '/positions': return cmdPositions(chatId);
     case '/pause': return cmdPause(chatId);
     case '/resume': return cmdResume(chatId);
+    case '/screener': return cmdScreener(chatId);
     default:
       await sendMsg(chatId,
-        `Unknown command.\n\nAvailable:\n<code>/status</code> — bot overview\n<code>/positions</code> — active LP positions\n<code>/pause</code> — pause auto-open\n<code>/resume</code> — resume auto-open`);
+        `Unknown command.\n\nAvailable:\n<code>/status</code> — bot overview\n<code>/positions</code> — active LP positions\n<code>/screener</code> — screener overview (tracked, active, passing)\n<code>/pause</code> — pause auto-open\n<code>/resume</code> — resume auto-open`);
   }
 }
 
