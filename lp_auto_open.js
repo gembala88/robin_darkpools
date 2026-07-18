@@ -211,8 +211,6 @@ function checkGovernance(uniqueToken) {
 //   4. TVL >= $100k
 //   5. Governance
 export async function checkAutoOpenConditions(po) {
-  if (AUTO_OPEN_DRY !== 1) return { pass: false, reason: 'auto-open disabled in config' };
-
   // Gate 1: Growth trend (replaces score >= 60)
   const trend = computeTrend(po);
   if (trend.direction !== 'up') return { pass: false, reason: `trend ${trend.direction} (${trend.slopePct}%/cycle) — need UP` };
