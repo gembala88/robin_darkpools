@@ -987,7 +987,9 @@ async function main() {
         lastSummaryRun = now;
       }
     } catch (err) {
-      console.error('loop error:', err.shortMessage || err.message);
+      const msg = err.shortMessage || err.message;
+      console.error('loop error:', msg);
+      await tgScreener(`⚠️ <b>Loop error</b> — auto-open mungkin terganggu\n<code>${msg}</code>`).catch(() => {});
     }
   }, Math.min(pollMs, 60000));
 
