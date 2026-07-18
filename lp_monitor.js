@@ -2,7 +2,7 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import { Contract, Wallet, formatEther, formatUnits, AbiCoder, keccak256 } from 'ethers';
 import { makeProvider } from './provider.js';
-import { V3, V4, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG } from './config.js';
+import { V3, V4, V4_NFPM, LP_V3_CASHCAT_WETH } from './config.js';
 import { V3_NFPM_ABI, ERC20_ABI } from './abis.js';
 import { UC } from './config.js';
 import { tg } from './telegram.js';
@@ -10,8 +10,7 @@ import { withdrawV3, withdrawV4 } from './lp_withdraw.js';
 
 const abi = AbiCoder.defaultAbiCoder();
 const STATE_FILE = new URL('./lp_state.json', import.meta.url);
-const CASHCAT = LP_V3_CASHCAT_WETH.token0;
-const WETH = LP_V3_CASHCAT_WETH.token1;
+
 const { sqrt } = Math;
 
 const AUTO_CLOSE_DRY = process.env.AUTO_CLOSE_DRY !== '0';
@@ -57,8 +56,8 @@ async function getV3Position(provider, tokenId) {
   }
 }
 
-async function getPoolSlot0(provider) {
-  const slot0Raw = await provider.call({ to: LP_V3_CASHCAT_WETH.pool, data: '0x3850c7bd' });
+async function getPoolSlot0(provider, poolAddr) {
+  const slot0Raw = await provider.call({ to: poolAddr, data: '0x3850c7bd' });
   const [sqrtPriceX96, tick] = AbiCoder.defaultAbiCoder().decode(
     ['uint160', 'int24', 'uint16', 'uint16', 'uint16', 'uint8', 'bool'], slot0Raw
   );
@@ -75,6 +74,11 @@ function sanityCheck(pos, currentTick, sqrtPriceX96) {
   return null;
 }
 
+async function getV3PoolAddress(provider, token0, token1, fee) {
+  const factory = new Contract(V3.factory, ['function getPool(address,address,uint24) view returns (address)'], provider);
+  return await factory.getPool(token0, token1, fee);
+}
+
 // Check IL and trigger auto-close if needed (V3 only)
 async function checkV3(provider, entry, config) {
   if (!entry?.tokenId) return null;
@@ -82,7 +86,22 @@ async function checkV3(provider, entry, config) {
   const pos = await getV3Position(provider, tokenId);
   if (!pos) return { error: 'position burned or not found' };
 
-  const { tick: currentTick, sqrtPriceX96 } = await getPoolSlot0(provider);
+  // Derive pool address from entry's own token0/token1/fee (NOT hardcoded CASHCAT)
+  let poolAddr;
+  let poolSymbol = entry.pool || '?/?';
+  if (entry.token0 && entry.token1 && entry.fee != null) {
+    try {
+      poolAddr = await getV3PoolAddress(provider, entry.token0, entry.token1, entry.fee);
+    } catch {
+      return { error: `cannot resolve pool address for ${poolSymbol}` };
+    }
+  } else {
+    // Legacy fallback — entry without token0/token1/fee
+    poolAddr = LP_V3_CASHCAT_WETH.pool;
+    poolSymbol = LP_V3_CASHCAT_WETH.symbol;
+  }
+
+  const { tick: currentTick, sqrtPriceX96 } = await getPoolSlot0(provider, poolAddr);
 
   // SANITY GUARD: reject glitch data
   const sanity = sanityCheck(pos, currentTick, sqrtPriceX96);
@@ -100,7 +119,7 @@ async function checkV3(provider, entry, config) {
 
   const result = {
     dex: 'V3',
-    pool: LP_V3_CASHCAT_WETH.symbol,
+    pool: poolSymbol,
     tokenId: entry.tokenId,
     currentTick,
     tickLower: Number(pos.tickLower),
@@ -148,14 +167,26 @@ async function checkV3(provider, entry, config) {
 }
 
 async function checkV4(provider, entry, config) {
-  if (!config.enableV4CashcatUsdg) return null;
-  if (entry && entry.dex !== 'V4') return null;
+  if (entry?.dex !== 'V4') return null;
   if (!entry?.tokenId) { console.log('  V4 entry tanpa tokenId, skip'); return null; }
 
   const stateView = new Contract(V4.stateView, [
     'function getSlot0(bytes32) view returns (uint160, int24, uint24, uint24)',
   ], provider);
-  const poolId = computeV4PoolId(LP_V4_CASHCAT_USDG.key);
+
+  // Use entry's own pool data (NOT hardcoded CASHCAT/USDG)
+  let poolId;
+  let poolSymbol = entry.pool || '?/?';
+  if (entry.poolId) {
+    poolId = entry.poolId;
+  } else if (entry.currency0 && entry.currency1 && entry.fee != null && entry.tickSpacing != null && entry.hooks != null) {
+    poolId = computeV4PoolId({
+      currency0: entry.currency0, currency1: entry.currency1,
+      fee: entry.fee, tickSpacing: entry.tickSpacing, hooks: entry.hooks,
+    });
+  } else {
+    return { error: 'V4 entry missing poolId or pool key fields' };
+  }
 
   let currentTick;
   try {
@@ -184,7 +215,7 @@ async function checkV4(provider, entry, config) {
   if (!hasILData) {
     return {
       error: 'V4 legacy position (no entryTick/tickBounds) — skip IL calc',
-      dex: 'V4', pool: LP_V4_CASHCAT_USDG.symbol, tokenId: entry.tokenId,
+      dex: 'V4', pool: poolSymbol, tokenId: entry.tokenId,
       currentTick, price: tickToPrice(currentTick),
     };
   }
@@ -205,7 +236,7 @@ async function checkV4(provider, entry, config) {
 
   const result = {
     dex: 'V4',
-    pool: LP_V4_CASHCAT_USDG.symbol,
+    pool: poolSymbol,
     tokenId: entry.tokenId,
     currentTick,
     tickLower: entry.tickLower,
