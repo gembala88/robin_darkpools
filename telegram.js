@@ -20,6 +20,7 @@ export async function tg(text) {
       body: JSON.stringify({ chat_id: CHAT, text, parse_mode: 'HTML',
         disable_web_page_preview: true, link_preview_options: { is_disabled: true } }),
     });
+    if (S_CHANNEL) await _screenerSend(S_CHANNEL, text);
   } catch {}
 }
 

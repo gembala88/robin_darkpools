@@ -15,8 +15,6 @@ import { UC } from './config.js';
 
 const abi = AbiCoder.defaultAbiCoder();
 const STATE_FILE = new URL('./lp_state.json', import.meta.url);
-const CASHCAT = LP_V3_CASHCAT_WETH.token0;
-
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { positions: [] }; }
 }
@@ -35,17 +33,31 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
     console.log(`  tokensOwed0: ${formatUnits(pos.tokensOwed0, 18)}`);
     console.log(`  tokensOwed1: ${formatEther(pos.tokensOwed1)}`);
     console.log(`  tickLower: ${pos.tickLower}, tickUpper: ${pos.tickUpper}`);
-    return;
+    return {};
   }
 
-  // Step 1: Get current position state
+  // Read position + token symbols dynamically
   const pos = await nfpm.positions.staticCall(tokenId);
+  const t0 = new Contract(pos.token0, ERC20_ABI, provider);
+  const t1 = new Contract(pos.token1, ERC20_ABI, provider);
+  const [sym0, sym1] = await Promise.all([
+    t0.symbol().catch(() => pos.token0.slice(0, 10)),
+    t1.symbol().catch(() => pos.token1.slice(0, 10)),
+  ]);
+
+  console.log(`  Position: ${sym0}/${sym1}`);
   console.log(`  Current liquidity: ${formatUnits(pos.liquidity, 18)}`);
-  console.log(`  tokensOwed0: ${formatUnits(pos.tokensOwed0, 18)} CASHCAT`);
-  console.log(`  tokensOwed1: ${formatEther(pos.tokensOwed1)} WETH`);
+  console.log(`  tokensOwed0: ${formatUnits(pos.tokensOwed0, 18)} ${sym0}`);
+  console.log(`  tokensOwed1: ${formatEther(pos.tokensOwed1)} ${sym1}`);
+
+  // Track collected fees
+  let collected0 = 0n;
+  let collected1 = 0n;
 
   if (pos.liquidity === 0n) {
     console.log('  Liquidity already 0, skipping decreaseLiquidity');
+    collected0 = pos.tokensOwed0;
+    collected1 = pos.tokensOwed1;
   } else {
     // Step 1: decreaseLiquidity
     console.log('\n  Step 1: decreaseLiquidity...');
@@ -63,6 +75,11 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
     console.log(`  decreaseLiquidity tx: ${decTx.hash}`);
     await decTx.wait();
     console.log('  decrease done');
+
+    // Re-read tokens owed after decrease (fees may have accrued during decrease)
+    const pos2 = await nfpm.positions.staticCall(tokenId);
+    collected0 = pos2.tokensOwed0;
+    collected1 = pos2.tokensOwed1;
   }
 
   // Step 2: collect fees
@@ -78,7 +95,7 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
     const colTx = await wallet.sendTransaction(colPop);
     console.log(`  collect tx: ${colTx.hash}`);
     await colTx.wait();
-    console.log('  collect done');
+    console.log(`  collect done — ${formatUnits(collected0, 18)} ${sym0} + ${formatEther(collected1)} ${sym1}`);
   } catch (e) {
     console.log(`  collect failed (may be fine): ${e.shortMessage?.slice(0,60) || e.message?.slice(0,60)}`);
   }
@@ -96,15 +113,23 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
   }
 
   // Show final balances
-  const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
-  const finalBal = await cashcat.balanceOf(wallet.address);
-  console.log(`\n  Final CASHCAT balance: ${formatEther(finalBal)}`);
+  const finalBal0 = await t0.balanceOf(wallet.address);
+  const finalBal1 = await t1.balanceOf(wallet.address);
+  console.log(`\n  Final ${sym0} balance: ${formatUnits(finalBal0, 18)}`);
+  console.log(`  Final ${sym1} balance: ${formatEther(finalBal1)}`);
+
+  return {
+    fee0: formatUnits(collected0, 18),
+    fee1: formatEther(collected1),
+    sym0, sym1,
+    token0: pos.token0, token1: pos.token1,
+  };
 }
 
 // ===== V4 WITHDRAW =====
 // tokenId optional: if null, looks up from state or V4_TOKEN_ID env.
 export async function withdrawV4(provider, wallet, config, tokenId = null) {
-  console.log(`\n=== V4 Withdraw (CASHCAT/USDG) ===`);
+  console.log(`\n=== V4 Withdraw ===`);
   if (!config.enableV4CashcatUsdg) { console.log('  SKIPPED (disabled)'); return; }
 
   if (tokenId === null) {
@@ -119,32 +144,38 @@ export async function withdrawV4(provider, wallet, config, tokenId = null) {
     tokenId = BigInt(tokenId);
   }
   const poolKey = LP_V4_CASHCAT_USDG.key;
+  const currency0 = poolKey.currency0;
+  const currency1 = poolKey.currency1;
 
-  // Use getPositionLiquidity(uint256) — positions(uint256) dari V3 TIDAK ADA di V4
+  // Read token symbols dynamically
+  const t0 = new Contract(currency0, ERC20_ABI, provider);
+  const t1 = new Contract(currency1, ERC20_ABI, provider);
+  const [sym0, sym1] = await Promise.all([
+    t0.symbol().catch(() => currency0.slice(0, 10)),
+    t1.symbol().catch(() => currency1.slice(0, 10)),
+  ]);
+
+  // Use getPositionLiquidity(uint256)
   const v4Reader = new Contract(V4_NFPM, [
     'function getPositionLiquidity(uint256) view returns (uint128)',
   ], provider);
   const liquidity = await v4Reader.getPositionLiquidity(tokenId);
-  const currency0 = poolKey.currency0;
-  const currency1 = poolKey.currency1;
   console.log(`  Token ID: ${tokenId}`);
-  console.log(`  Position: ${currency0} / ${currency1}`);
+  console.log(`  Position: ${sym0}/${sym1}`);
   console.log(`  Liquidity: ${formatUnits(liquidity, 18)}`);
 
   if (liquidity === 0n) {
     console.log('  Liquidity already 0. Nothing to withdraw.');
-    return;
+    return {};
   }
 
   if (!wallet) {
     console.log('  DRY-RUN mode');
     console.log(`  Would call modifyLiquidities with actions: DECREASE_LIQUIDITY(1) + TAKE_PAIR(0x11)`);
-    console.log(`  (modifyLiquiditiesWithoutUnlock + ManagerLocked fix, same pattern as mint)`);
-    return;
+    return {};
   }
 
   // Actions: DECREASE_LIQUIDITY(1) + TAKE_PAIR(0x11)
-  // TAKE_PAIR sends both tokens back to wallet (opposite of SETTLE_PAIR in mint)
   const decreaseParams = abi.encode(
     ['uint256', 'uint256', 'uint128', 'uint128', 'bytes'],
     [tokenId, liquidity, 0n, 0n, '0x']
@@ -184,9 +215,15 @@ export async function withdrawV4(provider, wallet, config, tokenId = null) {
   }
 
   // Show final balances
-  const cashcat = new Contract(CASHCAT, ERC20_ABI, provider);
-  const finalBal = await cashcat.balanceOf(wallet.address);
-  console.log(`  Final CASHCAT balance: ${formatEther(finalBal)}`);
+  const finalBal0 = await t0.balanceOf(wallet.address);
+  const finalBal1 = await t1.balanceOf(wallet.address);
+  console.log(`  Final ${sym0} balance: ${formatUnits(finalBal0, 18)}`);
+  console.log(`  Final ${sym1} balance: ${formatEther(finalBal1)}`);
+
+  return {
+    sym0, sym1,
+    token0: currency0, token1: currency1,
+  };
 }
 
 // ===== SWAP-BACK TOKENS TO ETH =====

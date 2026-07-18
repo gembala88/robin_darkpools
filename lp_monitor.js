@@ -149,9 +149,11 @@ async function checkV3(provider, entry, config) {
       const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
       await tg(`\u{1F534} AUTO-CLOSING position #${entry.tokenId}\nIL: ${ilPct.toFixed(2)}%`).catch(() => {});
       try {
-        await withdrawV3(provider, wallet, tokenId, config);
+        const wdResult = await withdrawV3(provider, wallet, tokenId, config);
         result.autoClosed = true;
+        const feeLine = wdResult?.fee0 ? `<code>${wdResult.fee0} ${wdResult.sym0} + ${wdResult.fee1} ${wdResult.sym1}</code>` : '';
         await tg(`\u{2705} AUTO-CLOSED #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
+          `${feeLine ? `Fees collected: ${feeLine}\n` : ''}` +
           `Lihat wallet untuk hasil withdraw.`).catch(() => {});
       } catch (e) {
         const errMsg = e.shortMessage || e.message || String(e);
