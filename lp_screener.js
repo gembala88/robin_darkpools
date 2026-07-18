@@ -996,6 +996,7 @@ async function main() {
     } catch (err) {
       const msg = err.shortMessage || err.message;
       console.error('loop error:', msg);
+      console.error(err.stack || err);
       await tgScreener(`⚠️ <b>Loop error</b> — auto-open mungkin terganggu\n<code>${msg}</code>`).catch(() => {});
     }
   }, Math.min(pollMs, 60000));

@@ -81,7 +81,7 @@ export async function enrichPoolData(po, provider) {
         readDecimals(token1, provider),
       ]);
       return {
-        dex: 'V3', token0, token1, fee, tickSpacing,
+        dex: 'V3', token0, token1, fee: Number(fee), tickSpacing,
         decimals0: d0, decimals1: d1, poolAddr,
       };
     } catch (err) {
