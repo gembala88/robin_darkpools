@@ -94,13 +94,30 @@ export async function enrichPoolData(po, provider) {
 
 // ===== TREND HISTORY =====
 // Stores TVL/volume snapshots per pool (max 12 = 1hr at 5-min cycles)
+// Sanity filter: rejects TVL jumps > 50% vs previous snapshot (DexScreener
+// glitch guard — observed $434k→$177k in 25min while on-chain was stable).
 const MAX_HISTORY = 12;
 
 export function recordTrendSnapshot(po) {
   if (!po.trendHistory) po.trendHistory = [];
+  const newTvl = po.tvlUsd || 0;
+  const prev = po.trendHistory.length > 0 ? po.trendHistory[po.trendHistory.length - 1].tvlUsd : 0;
+
+  // Sanity filter: clamp > 50% change from previous snapshot (DexScreener glitch guard)
+  if (prev > 0 && newTvl > 0) {
+    const change = Math.abs(newTvl - prev) / prev;
+    if (change > 0.5) {
+      const clamped = Math.round(prev * (1 + Math.sign(newTvl - prev) * 0.5));
+      console.log(`  [TVL GLITCH] ${po.baseToken?.symbol || '?'}: $${prev}→$${newTvl} (${(change*100).toFixed(0)}%) — clamped to $${clamped}`);
+      po.trendHistory.push({ time: Date.now(), tvlUsd: clamped, volume24h: po.volume24h || 0, glitch: true });
+      if (po.trendHistory.length > MAX_HISTORY) po.trendHistory = po.trendHistory.slice(-MAX_HISTORY);
+      return;
+    }
+  }
+
   po.trendHistory.push({
     time: Date.now(),
-    tvlUsd: po.tvlUsd || 0,
+    tvlUsd: newTvl,
     volume24h: po.volume24h || 0,
   });
   if (po.trendHistory.length > MAX_HISTORY) {
@@ -108,15 +125,17 @@ export function recordTrendSnapshot(po) {
   }
 }
 
-// Linear regression slope on TVL from LAST 4 entries only,
-// returns % change per cycle. Using only last 4 avoids old
-// history masking recent declines.
+// Linear regression slope on TVL from LAST 4 NON-GLITCH entries,
+// returns % change per cycle. Glitch entries (DexScreener spikes > 50%)
+// are excluded to avoid false trends from bad data.
 export function computeTrend(po) {
   const h = po.trendHistory;
   if (!h || h.length < 4) return { direction: 'neutral', slopePct: 0, reason: `< 4 data points` };
 
-  // Use only the most recent 4 entries
-  const recent = h.slice(-4);
+  // Use last 4 non-glitch entries
+  const clean = h.filter(e => !e.glitch);
+  const recent = clean.slice(-4);
+  if (recent.length < 4) return { direction: 'neutral', slopePct: 0, reason: `< 4 non-glitch points` };
   const N = recent.length;
   let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
   const meanY = recent.reduce((s, p) => s + p.tvlUsd, 0) / N;
