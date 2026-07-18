@@ -216,9 +216,9 @@ export async function checkAutoOpenConditions(po) {
   if (trend.direction !== 'up') return { pass: false, reason: `trend ${trend.direction} (${trend.slopePct}%/cycle) — need UP` };
   if ((po.score || 0) < 35) return { pass: false, reason: `score ${po.score} < 35` };
 
-  // Gate 2: HHI done and < 2500
+  // Gate 2: HHI done and < 4000
   if (!po.hhiData || po.hhiData.hhi === undefined) return { pass: false, reason: 'HHI not checked' };
-  if (po.hhiData.hhi >= 2500) return { pass: false, reason: `HHI ${po.hhiData.hhi} >= 2500` };
+  if (po.hhiData.hhi >= 4000) return { pass: false, reason: `HHI ${po.hhiData.hhi} >= 4000` };
 
   // Gate 3: GMGN done and clean
   if (!po.gmgnChecked) return { pass: false, reason: 'GMGN not checked' };
