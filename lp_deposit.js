@@ -11,6 +11,7 @@ import { makeProvider } from './provider.js';
 import { V3, V4, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG, NATIVE } from './config.js';
 import { V3_NFPM_ABI, V4_NFPM_ABI, ERC20_ABI, UNIVERSAL_ROUTER_ABI, V3_SWAP_ROUTER_ABI } from './abis.js';
 import { UC, UCW } from './config.js';
+import { getTokenUsdPricesFromTick } from './v3_math.js';
 
 const abi = AbiCoder.defaultAbiCoder();
 const STATE_FILE = new URL('./lp_state.json', import.meta.url);
@@ -19,6 +20,18 @@ const CASHCAT = LP_V3_CASHCAT_WETH.token0;
 const WETH = LP_V3_CASHCAT_WETH.token1;
 const USDG = LP_V4_CASHCAT_USDG.key.currency1;
 const MAX_ACTIVE_POSITIONS = Number(process.env.MAX_LP_POSITIONS || 3);
+
+// ===== ENTRY USD VALUE =====
+// Compute entry USD value using pool tick at deposit time + token amounts.
+// Returns Number (USD) or null if prices unavailable (TP skipped).
+async function computeEntryUsdValue(amount0, amount1, token0, token1, entryTick, decimals0, decimals1) {
+  const prices = getTokenUsdPricesFromTick(token0, token1, entryTick);
+  if (!prices) return null;
+  let value = 0;
+  if (prices.token0Usd > 0) value += Number(formatUnits(amount0, decimals0)) * prices.token0Usd;
+  if (prices.token1Usd > 0) value += Number(formatUnits(amount1, decimals1)) * prices.token1Usd;
+  return Math.round(value * 100) / 100; // 2 decimal places
+}
 
 // Tokens considered "shared base" (not unique to a pair)
 const STABLE_OR_WRAPPED = new Set([WETH.toLowerCase(), USDG.toLowerCase()]);
@@ -283,9 +296,14 @@ export async function depositV3(provider, wallet, config, poolInfo = null) {
   }
   console.log(`  Token ID: ${tokenId}`);
 
+  // Compute entry USD value for trailing take-profit
+  const entryValueUsd = await computeEntryUsdValue(implied0, implied1, token0, token1, entryTick, decimals0, decimals1).catch(() => null);
+  if (entryValueUsd !== null) console.log(`  Entry USD value: \$${entryValueUsd.toFixed(2)}`);
+
   const position = { dex: 'V3', pool: symbol, tokenId: tokenId?.toString(),
     token0, token1, fee, entryTick, tickLower, tickUpper,
     amount0: amount0Desired.toString(), amount1: amount1Desired.toString(),
+    entryValueUsd,
     block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
   const state = loadState();
   state.positions.push(position);
@@ -462,10 +480,16 @@ export async function depositV4(provider, wallet, config, poolInfo = null) {
     }
     console.log(`  Token ID: ${tokenId}`);
 
+    // Compute entry USD value (V4 uses bal0/bal1 — actual amounts used)
+    const entryValueUsd = await computeEntryUsdValue(bal0, bal1, token0, token1, currentTick, decimals0, decimals1).catch(() => null);
+    if (entryValueUsd !== null) console.log(`  Entry USD value: \$${entryValueUsd.toFixed(2)}`);
+
     const position = { dex: 'V4', pool: symbol, tokenId, entryTick: currentTick, tickLower, tickUpper,
       currency0: poolKey.currency0, currency1: poolKey.currency1, fee: poolKey.fee,
       tickSpacing: poolKey.tickSpacing, hooks: poolKey.hooks, poolId: computeV4PoolId(poolKey),
-      liquidity: liquidity.toString(), block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
+      liquidity: liquidity.toString(), entryValueUsd,
+      block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
+    console.log(`  Entry USD value: \$${entryValueUsd?.toFixed(2) || 'N/A'}`);
     const state = loadState();
     state.positions.push(position);
     saveState(state);

@@ -7,6 +7,7 @@ import { V3_NFPM_ABI, ERC20_ABI } from './abis.js';
 import { UC } from './config.js';
 import { tg } from './telegram.js';
 import { withdrawV3, withdrawV4, swapBackAfterWithdraw } from './lp_withdraw.js';
+import { getSqrtRatioAtTick, getAmountsForLiquidity, getEthUsdPrice, getTokenUsdPricesFromTick } from './v3_math.js';
 
 const abi = AbiCoder.defaultAbiCoder();
 const STATE_FILE = new URL('./lp_state.json', import.meta.url);
@@ -147,6 +148,73 @@ function checkTrailingTakeProfit(netGainPct, entry) {
   return { tpArmed, tpPeak, tpTriggered, tpJustArmed };
 }
 
+// ===== USD PRICE HELPERS =====
+// WETH address (from LP_V3_CASHCAT_WETH.token1) — duplicated from v3_math.js for DexScreener fallback
+const WETH_ADDR_MONITOR = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
+
+// Derive token0/token1 USD prices: first try tick-based (WETH pairs), then DexScreener.
+async function getTokenUsdPrices(token0, token1, currentTick, sqrtPriceX96, provider) {
+  // Try tick-based derivation first (fast, no external API)
+  const tickPrices = getTokenUsdPricesFromTick(token0, token1, currentTick);
+  if (tickPrices) return tickPrices;
+  // Fallback: fetch ETH price directly
+  const ethUsd = await getEthUsdPrice();
+  if (!ethUsd) return null;
+  // Try DexScreener API for non-WETH pairs
+  try {
+    const pairAddr = provider ? await resolveV3PoolAnyFee(token0, token1, provider) : null;
+    if (pairAddr) {
+      const url = `https://api.dexscreener.com/latest/dex/pair/robinhood/${pairAddr.toLowerCase()}`;
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (data?.pair?.priceUsd) {
+        const baseAddr = data.pair.baseToken?.address?.toLowerCase();
+        const t0l = token0.toLowerCase(), t1l = token1.toLowerCase();
+        if (baseAddr === t0l) return { token0Usd: Number(data.pair.priceUsd), token1Usd: 0 };
+        if (baseAddr === t1l) return { token0Usd: 0, token1Usd: Number(data.pair.priceUsd) };
+      }
+    }
+  } catch {}
+  return null;
+}
+
+async function resolveV3PoolAnyFee(token0, token1, provider) {
+  const factory = new Contract(V3.factory, ['function getPool(address,address,uint24) view returns (address)'], provider);
+  for (const f of [10000, 3000, 500, 100]) {
+    try {
+      const addr = await factory.getPool(token0, token1, f);
+      if (addr && addr !== '0x0000000000000000000000000000000000000000') return addr;
+    } catch {}
+  }
+  return null;
+}
+
+// Compute current USD value of a position from its live amounts.
+async function computePositionUsdValue(provider, liquidity, sqrtPriceX96, tickLower, tickUpper, currentTick, tokensOwed0, tokensOwed1, token0, token1) {
+  const prices = await getTokenUsdPrices(token0, token1, currentTick, sqrtPriceX96, provider);
+  if (!prices || (prices.token0Usd === 0 && prices.token1Usd === 0)) return null;
+
+  const { amount0, amount1 } = getAmountsForLiquidity(liquidity, sqrtPriceX96, tickLower, tickUpper);
+  const total0 = amount0 + tokensOwed0;
+  const total1 = amount1 + tokensOwed1;
+
+  let valueUsd = 0;
+  // Convert amounts to float for USD calculation
+  if (prices.token0Usd > 0) {
+    try {
+      const d0 = await (new Contract(token0, ERC20_ABI, provider)).decimals().catch(() => 18);
+      valueUsd += Number(formatUnits(total0, d0)) * prices.token0Usd;
+    } catch {}
+  }
+  if (prices.token1Usd > 0) {
+    try {
+      const d1 = await (new Contract(token1, ERC20_ABI, provider)).decimals().catch(() => 18);
+      valueUsd += Number(formatUnits(total1, d1)) * prices.token1Usd;
+    } catch {}
+  }
+  return valueUsd;
+}
+
 async function getV3PoolAddress(provider, token0, token1, fee) {
   const factory = new Contract(V3.factory, ['function getPool(address,address,uint24) view returns (address)'], provider);
   return await factory.getPool(token0, token1, fee);
@@ -190,12 +258,31 @@ async function checkV3(provider, entry, config) {
   const threshold = Number(config.ilExitThresholdPct);
   const ilExceedsThreshold = ilPct < -threshold;
 
-  // --- Trailing take-profit ---
-  const positionValueEth = entry.initialValueEth || DEFAULT_POSITION_VALUE_ETH;
-  const feePct = positionValueEth > 0 ? (feeValueEth / positionValueEth) * 100 : 0;
-  const netGainPct = feePct + ilPct;
-  const tp = checkTrailingTakeProfit(netGainPct, entry);
-  // Persist TP state back to entry (saved to lp_state.json in monitorOnce)
+  // --- Trailing take-profit (USD-based) ---
+  // netProfitPct = (currentValueUsd - entryValueUsd) / entryValueUsd * 100
+  // Hanya aktif jika entryValueUsd tersimpan (posisi baru setelah code ini deploy)
+  let netProfitPct = null;
+  let currentValueUsd = null;
+  let entryValueUsd = entry.entryValueUsd ?? null;
+  let tp = { tpArmed: false, tpPeak: 0, tpTriggered: false, tpJustArmed: false };
+
+  if (entryValueUsd !== null && entryValueUsd > 0) {
+    currentValueUsd = await computePositionUsdValue(
+      provider, pos.liquidity, sqrtPriceX96,
+      Number(pos.tickLower), Number(pos.tickUpper), currentTick,
+      pos.tokensOwed0, pos.tokensOwed1,
+      entry.token0 || pos.token0, entry.token1 || pos.token1
+    );
+    if (currentValueUsd !== null && currentValueUsd > 0) {
+      netProfitPct = ((currentValueUsd - entryValueUsd) / entryValueUsd) * 100;
+      tp = checkTrailingTakeProfit(netProfitPct, entry);
+    }
+  } else {
+    // Existing position tanpa entryValueUsd — tidak bisa arm TP
+    // Stop-loss (IL) tetap berjalan seperti biasa
+    entry.tpArmed = false;
+    entry.tpPeak = 0;
+  }
   entry.tpArmed = tp.tpArmed;
   entry.tpPeak = tp.tpPeak;
 
@@ -210,8 +297,9 @@ async function checkV3(provider, entry, config) {
     entryPrice,
     ilPct,
     feeValueEth,
-    feePct,
-    netGainPct,
+    entryValueUsd,
+    currentValueUsd,
+    netProfitPct,
     tpArmed: tp.tpArmed,
     tpPeak: tp.tpPeak,
     tpTriggered: tp.tpTriggered,
@@ -224,7 +312,8 @@ async function checkV3(provider, entry, config) {
 
   // Notify jika baru armed
   if (tp.tpJustArmed) {
-    await tg(`\u{1F3AF} Take-profit ARMED #${entry.tokenId}: net gain ${netGainPct.toFixed(1)}% — mulai lacak puncak`).catch(() => {});
+    const gainStr = netProfitPct !== null ? netProfitPct.toFixed(1) : '?';
+    await tg(`\u{1F3AF} Take-profit ARMED #${entry.tokenId}: +${gainStr}% (\$${currentValueUsd?.toFixed(2) || '?'}) — mulai lacak puncak`).catch(() => {});
   }
 
   // AUTO-CLOSE: trigger if IL exceeds threshold OR TP triggered, + sanity passes, or FORCE_TRIGGER=1
@@ -234,7 +323,7 @@ async function checkV3(provider, entry, config) {
     if (FORCE_TRIGGER) {
       reason = 'FORCE_TRIGGER=1';
     } else if (tp.tpTriggered) {
-      reason = `TAKE-PROFIT: net gain turun dari ${tp.tpPeak.toFixed(1)}% ke ${netGainPct.toFixed(1)}% (trail ${TP_TRAIL_DISTANCE}%)`;
+      reason = `TAKE-PROFIT: profit turun dari ${tp.tpPeak.toFixed(1)}% ke ${netProfitPct !== null ? netProfitPct.toFixed(1) : '?'}% (trail ${TP_TRAIL_DISTANCE}%)`;
     } else {
       reason = `IL=${ilPct.toFixed(2)}% < -${threshold}%`;
     }
@@ -248,8 +337,9 @@ async function checkV3(provider, entry, config) {
     } else if (LIVE) {
       const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
       if (tp.tpTriggered) {
-        await tg(`\u{2705} TAKE-PROFIT #${entry.tokenId}: net gain turun dari ${tp.tpPeak.toFixed(1)}% ke ${netGainPct.toFixed(1)}% (trail ${TP_TRAIL_DISTANCE}%)\n` +
-          `Posisi ditutup, profit terkunci.`).catch(() => {});
+        const gainStr = netProfitPct !== null ? netProfitPct.toFixed(1) : '?';
+        await tg(`\u{2705} TAKE-PROFIT #${entry.tokenId}: profit turun dari ${tp.tpPeak.toFixed(1)}% ke ${gainStr}% (trail ${TP_TRAIL_DISTANCE}%)\n` +
+          `Nilai saat ini: \$${currentValueUsd?.toFixed(2) || '?'} | Posisi ditutup.`).catch(() => {});
       } else {
         await tg(`\u{1F534} AUTO-CLOSING position #${entry.tokenId}\nIL: ${ilPct.toFixed(2)}%`).catch(() => {});
       }
@@ -316,9 +406,11 @@ async function checkV4(provider, entry, config) {
   }
 
   let currentTick;
+  let sqrtPriceX96;
   try {
-    const [, tick] = await stateView.getSlot0.staticCall(poolId);
-    currentTick = Number(tick);
+    const slot0 = await stateView.getSlot0.staticCall(poolId);
+    sqrtPriceX96 = BigInt(slot0[0]);
+    currentTick = Number(slot0[1]);
   } catch {
     return { error: 'V4 pool not initialized' };
   }
@@ -355,12 +447,29 @@ async function checkV4(provider, entry, config) {
   const threshold = Number(config.ilExitThresholdPct);
   const ilExceedsThreshold = ilPct < -threshold;
 
-  // --- Trailing take-profit ---
-  // V4: feeValueEth not available from NFPM, set to 0 (conservative)
-  const positionValueEth = entry.initialValueEth || DEFAULT_POSITION_VALUE_ETH;
-  const feePct = 0;
-  const netGainPct = feePct + ilPct;
-  const tp = checkTrailingTakeProfit(netGainPct, entry);
+  // --- Trailing take-profit (USD-based) ---
+  let netProfitPct = null;
+  let currentValueUsd = null;
+  let entryValueUsd = entry.entryValueUsd ?? null;
+  let tp = { tpArmed: false, tpPeak: 0, tpTriggered: false, tpJustArmed: false };
+  const token0 = entry.currency0 || entry.token0;
+  const token1 = entry.currency1 || entry.token1;
+
+  if (entryValueUsd !== null && entryValueUsd > 0 && token0 && token1) {
+    currentValueUsd = await computePositionUsdValue(
+      provider, posLiq, sqrtPriceX96,
+      entry.tickLower, entry.tickUpper, currentTick,
+      0n, 0n, // V4 NFPM tidak expose tokensOwed, assume 0 (conservative)
+      token0, token1
+    );
+    if (currentValueUsd !== null && currentValueUsd > 0) {
+      netProfitPct = ((currentValueUsd - entryValueUsd) / entryValueUsd) * 100;
+      tp = checkTrailingTakeProfit(netProfitPct, entry);
+    }
+  } else {
+    entry.tpArmed = false;
+    entry.tpPeak = 0;
+  }
   entry.tpArmed = tp.tpArmed;
   entry.tpPeak = tp.tpPeak;
 
@@ -380,8 +489,9 @@ async function checkV4(provider, entry, config) {
     price,
     entryPrice,
     ilPct,
-    feePct,
-    netGainPct,
+    entryValueUsd,
+    currentValueUsd,
+    netProfitPct,
     tpArmed: tp.tpArmed,
     tpPeak: tp.tpPeak,
     tpTriggered: tp.tpTriggered,
@@ -394,7 +504,8 @@ async function checkV4(provider, entry, config) {
 
   // Notify jika baru armed
   if (tp.tpJustArmed) {
-    await tg(`\u{1F3AF} Take-profit ARMED V4 #${entry.tokenId}: net gain ${netGainPct.toFixed(1)}% — mulai lacak puncak`).catch(() => {});
+    const gainStr = netProfitPct !== null ? netProfitPct.toFixed(1) : '?';
+    await tg(`\u{1F3AF} Take-profit ARMED V4 #${entry.tokenId}: +${gainStr}% (\$${currentValueUsd?.toFixed(2) || '?'}) — mulai lacak puncak`).catch(() => {});
   }
 
   // AUTO-CLOSE: trigger if IL exceeds threshold OR TP triggered, or FORCE_TRIGGER=1
@@ -404,7 +515,7 @@ async function checkV4(provider, entry, config) {
     if (FORCE_TRIGGER) {
       reason = 'FORCE_TRIGGER=1';
     } else if (tp.tpTriggered) {
-      reason = `TAKE-PROFIT: net gain turun dari ${tp.tpPeak.toFixed(1)}% ke ${netGainPct.toFixed(1)}% (trail ${TP_TRAIL_DISTANCE}%)`;
+      reason = `TAKE-PROFIT: profit turun dari ${tp.tpPeak.toFixed(1)}% ke ${netProfitPct !== null ? netProfitPct.toFixed(1) : '?'}% (trail ${TP_TRAIL_DISTANCE}%)`;
     } else {
       reason = `IL=${ilPct.toFixed(2)}% < -${threshold}%`;
     }
@@ -418,8 +529,9 @@ async function checkV4(provider, entry, config) {
     } else if (LIVE) {
       const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
       if (tp.tpTriggered) {
-        await tg(`\u{2705} TAKE-PROFIT V4 #${entry.tokenId}: net gain turun dari ${tp.tpPeak.toFixed(1)}% ke ${netGainPct.toFixed(1)}% (trail ${TP_TRAIL_DISTANCE}%)\n` +
-          `Posisi ditutup, profit terkunci.`).catch(() => {});
+        const gainStr = netProfitPct !== null ? netProfitPct.toFixed(1) : '?';
+        await tg(`\u{2705} TAKE-PROFIT V4 #${entry.tokenId}: profit turun dari ${tp.tpPeak.toFixed(1)}% ke ${gainStr}% (trail ${TP_TRAIL_DISTANCE}%)\n` +
+          `Nilai saat ini: \$${currentValueUsd?.toFixed(2) || '?'} | Posisi ditutup.`).catch(() => {});
       } else {
         await tg(`\u{1F534} AUTO-CLOSING V4 position #${entry.tokenId}\nIL: ${ilPct.toFixed(2)}%`).catch(() => {});
       }
