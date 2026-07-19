@@ -34,6 +34,7 @@ const cfgDS = ucSafe('dexScreener.');
 const STATE_FILE = 'lp_screener_state.json';
 let state = { pools: {}, lastDiscovery: 0, lastFetch: 0 };
 let startTime = Date.now();
+let _lastTokenDiag = 0;
 
 // ===== HELPERS =====
 const coder = AbiCoder.defaultAbiCoder();
@@ -838,6 +839,28 @@ async function evaluatePools() {
   let scored = 0, passed = 0, notified = 0;
   const entries = Object.entries(state.pools);
 
+  // ===== DIAGNOSTIK: duplicate token per symbol (per 30 menit) =====
+  if (Date.now() - (_lastTokenDiag || 0) > 1800000) {
+    _lastTokenDiag = Date.now();
+    const tokenCounts = {};
+    for (const [, po] of entries) {
+      if (!po.baseToken?.address || !po.baseToken?.symbol) continue;
+      const sym = po.baseToken.symbol;
+      const addr = po.baseToken.address;
+      if (!tokenCounts[sym]) tokenCounts[sym] = { unique: new Set(), total: 0 };
+      tokenCounts[sym].unique.add(addr);
+      tokenCounts[sym].total++;
+    }
+    for (const [sym, info] of Object.entries(tokenCounts).sort((a, b) => b[1].total - a[1].total)) {
+      if (info.unique.size < info.total) {
+        const dupes = info.total - info.unique.size;
+        console.log(`  TOKEN DIAGNOSTIK: "${sym}" — ${info.total} pool entries, ${info.unique.size} unique token addresses (${dupes} duplikasi pool)`);
+      } else if (info.total >= 5) {
+        console.log(`  TOKEN DIAGNOSTIK: "${sym}" — ${info.total} pool entries, SEMUA token address UNIK (copycat/berbeda)`);
+      }
+    }
+  }
+
   for (const [key, po] of entries) {
     if (!po.tvlUsd && !po.volume24h) continue; // no data yet
 
@@ -861,6 +884,20 @@ async function evaluatePools() {
     // NOTE: threshold 15 menyamakan gate score (checkAutoOpenConditions) — sebelumnya
     // pakai minCandidateScore (35) yang menyebabkan token score 15-34 TIDAK PERNAH
     // dapat HHI dan stuck di 'HHI belum valid (pending)' selamanya.
+
+    // --- Retry reset: pools where HHI was checked but returned NO valid data ---
+    // Early return paths di _computeHHIImpl (no mints, no tokenIds, <2 active, <2 providers)
+    // set hhiChecked=true without hhiData. Ini JALAN BUNTU PERMANEN — tidak akan retry
+    // kecuali kita reset hhiChecked setelah cooldown. Reset setelah 6 jam agar pool
+    // yang kemudian punya aktivitas bisa dicek ulang.
+    if (po.hhiChecked && (po.hhiData === undefined || po.hhiData.hhi === undefined)) {
+      const lastRetry = po.hhiRetryAt || 0;
+      if (Date.now() - lastRetry > 6 * 3600 * 1000) {
+        console.log(`  HHI: resetting hhiChecked for ${po.pairAddress.slice(0, 14)} (prev: no valid data — retry after 6h)`);
+        po.hhiChecked = false;
+        po.hhiRetryAt = Date.now();
+      }
+    }
     if (po.score >= 15 && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 20000) {
       const cooldownOk = !po.hhiFailedAt || (Date.now() - po.hhiFailedAt) > 300000; // 5 min
       if (!cooldownOk) continue;
@@ -898,7 +935,11 @@ async function evaluatePools() {
     const gateTvl = po.tvlUsd || 0;
     let gateFail = null;
     if (gateScore < 15) gateFail = `score ${gateScore} < 15`;
-    else if (gateHhi === undefined) gateFail = `HHI belum valid (${po.hhiFailed ? `gagal ${po.hhiFailed}x, retry` : 'pending'})`;
+    else if (gateHhi === undefined) {
+      if (po.hhiChecked) gateFail = `HHI checked but invalid (${po.hhiData ? 'hhi=null' : 'no hhiData'}, permanent)`;
+      else if (po.hhiFailed) gateFail = `HHI belum valid (gagal ${po.hhiFailed}x, cooldown ${Math.ceil(Math.max(0, 5 - (Date.now()-po.hhiFailedAt)/60000))}min)`;
+      else gateFail = `HHI belum valid (pending)`;
+    }
     else if (gateHhi >= 7000) gateFail = `HHI ${gateHhi} >= 7000`;
     else if (!po.gmgnChecked) gateFail = 'GMGN belum dicek';
     else if (po.gmgnFlags && po.gmgnFlags.length > 0) gateFail = `GMGN flagged: ${po.gmgnFlags.join(',')}`;
