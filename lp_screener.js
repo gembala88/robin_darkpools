@@ -824,6 +824,7 @@ function loadState() {
     state = { pools: {}, lastDiscovery: 0, lastFetch: 0 };
     console.log('no prior state — starting fresh');
   }
+  if (!state.autoOpenCooldown) state.autoOpenCooldown = {};
 }
 
 function saveState() {
@@ -857,7 +858,10 @@ async function evaluatePools() {
 
     // HHI / LP concentration check for candidate pools (once per pool, TVL > $20K)
     // Retry on failure after 5 min cooldown (hhiFailedAt)
-    if (po.score >= (cfgSc('minCandidateScore') || 35) && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 20000) {
+    // NOTE: threshold 15 menyamakan gate score (checkAutoOpenConditions) — sebelumnya
+    // pakai minCandidateScore (35) yang menyebabkan token score 15-34 TIDAK PERNAH
+    // dapat HHI dan stuck di 'HHI belum valid (pending)' selamanya.
+    if (po.score >= 15 && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 20000) {
       const cooldownOk = !po.hhiFailedAt || (Date.now() - po.hhiFailedAt) > 300000; // 5 min
       if (!cooldownOk) continue;
       try {
@@ -899,6 +903,20 @@ async function evaluatePools() {
     else if (!po.gmgnChecked) gateFail = 'GMGN belum dicek';
     else if (po.gmgnFlags && po.gmgnFlags.length > 0) gateFail = `GMGN flagged: ${po.gmgnFlags.join(',')}`;
     else if (gateTvl < 20000) gateFail = `TVL $${gateTvl.toLocaleString()} < $20k`;
+    // Gate 0.5: Per-token cooldown — jika token yang SAMA sudah auto-open
+    // 2x berturut-turut, jeda 3 jam sebelum boleh auto-open lagi.
+    // Dipaksa coba token lain, bukan approve token yang sama terus-menerus.
+    if (!gateFail && po.baseToken?.address && state.autoOpenCooldown) {
+      const cd = state.autoOpenCooldown[po.baseToken.address];
+      if (cd && cd.consecutive >= 2) {
+        const elapsed = Date.now() - cd.lastTime;
+        const COOLDOWN_MS = 3 * 3600 * 1000;
+        if (elapsed < COOLDOWN_MS) {
+          const remaining = Math.ceil((COOLDOWN_MS - elapsed) / 60000);
+          gateFail = `cooldown ${remaining}min (${cd.consecutive}x berturut-turut)`;
+        }
+      }
+    }
     if (gateFail) {
       console.log(`  [gate] ${sym}: ${gateFail}, skip auto-open check`);
     } else {
@@ -907,7 +925,34 @@ async function evaluatePools() {
         const execProv = await (process.env.LP_EXEC_RPC_URL
           ? makeProvider('LP_EXEC_RPC_URL')
           : makeProvider('LP_SCREENER_RPC_URL')).catch(() => null);
-        await autoOpenExecute(po, execProv);
+        const result = await autoOpenExecute(po, execProv);
+        // Update cooldown AFTER sukses auto-open
+        if (result && po.baseToken?.address) {
+          if (!state.autoOpenCooldown) state.autoOpenCooldown = {};
+          const addr = po.baseToken.address;
+          const prev = state.autoOpenCooldown[addr];
+          if (prev && prev.lastToken === addr) {
+            // Token yang SAMA seperti sebelumnya — increment consecutive
+            state.autoOpenCooldown[addr] = {
+              consecutive: (prev.consecutive || 0) + 1,
+              lastTime: Date.now(),
+              lastToken: addr,
+            };
+          } else {
+            // Token BARU atau berbeda dari sebelumnya — reset ke 1
+            state.autoOpenCooldown[addr] = {
+              consecutive: 1,
+              lastTime: Date.now(),
+              lastToken: addr,
+            };
+          }
+          // Bersihkan entry token lain yang sudah lama (optional)
+          for (const key of Object.keys(state.autoOpenCooldown)) {
+            if (key !== addr && Date.now() - (state.autoOpenCooldown[key].lastTime || 0) > 7 * 86400000) {
+              delete state.autoOpenCooldown[key];
+            }
+          }
+        }
       } else {
         console.log(`  [auto-open BLOCKED] ${sym}: ${ao.reason}`);
       }
