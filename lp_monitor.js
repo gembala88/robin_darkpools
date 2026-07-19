@@ -82,6 +82,42 @@ function sanityCheck(pos, currentTick, sqrtPriceX96) {
   return null;
 }
 
+// ===== CLOSE CONFIRMATION =====
+// Double-confirms a position is truly closed via fresh on-chain queries,
+// NOT relying on cached/mid-computation data. Prevents false removals.
+async function confirmPositionClosed(provider, tokenId, dex) {
+  try {
+    if (dex === 'V3') {
+      const nfpm = new Contract(V3.nfpm, ['function ownerOf(uint256) view returns (address)', 'function positions(uint256) view returns (uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)'], provider);
+      // If ownerOf reverts, position NFT is burned — definitely closed
+      let owner;
+      try { owner = await nfpm.ownerOf(tokenId); } catch { return true; }
+      if (!owner) return true;
+      // Owner exists — check liquidity directly
+      const pos = await nfpm.positions.staticCall(tokenId);
+      const closed = pos.liquidity === 0n && pos.tokensOwed0 === 0n && pos.tokensOwed1 === 0n;
+      if (!closed) console.warn(`  confirmPositionClosed V3 #${tokenId}: liquidity=${pos.liquidity.toString()} tokensOwed=${pos.tokensOwed0}/${pos.tokensOwed1} — NOT closed`);
+      return closed;
+    }
+    if (dex === 'V4') {
+      const nfpm = new Contract(V4_NFPM, ['function ownerOf(uint256) view returns (address)'], provider);
+      let owner;
+      try { owner = await nfpm.ownerOf(tokenId); } catch { return true; }
+      if (!owner) return true;
+      // V4: check position liquidity directly
+      const reader = new Contract(V4_NFPM, ['function getPositionLiquidity(uint256) view returns (uint128)'], provider);
+      const liq = await reader.getPositionLiquidity(BigInt(tokenId));
+      const closed = liq === 0n;
+      if (!closed) console.warn(`  confirmPositionClosed V4 #${tokenId}: liquidity=${liq} — NOT closed`);
+      return closed;
+    }
+    return false;
+  } catch (e) {
+    console.warn(`  confirmPositionClosed error #${tokenId}: ${e.shortMessage || e.message.slice(0, 80)}`);
+    return false; // On error, DON'T remove (fail safe)
+  }
+}
+
 // ===== TRAILING TAKE-PROFIT =====
 // Pure function: computes TP state from netGainPct and previous entry state.
 // Returns { tpArmed, tpPeak, tpTriggered, tpJustArmed } — caller persists to entry.
@@ -429,10 +465,14 @@ async function monitorOnce(provider, config) {
       const result = await checkV3(provider, entry, config);
       if (!result || result.error) {
         console.log(`  V3 #${entry.tokenId}: ${result?.error ?? 'null'}`);
-        // FIX: posisi sudah tertutup/kosong BUKAN kegagalan sistem -- hapus dari
-        // tracking, jangan hitung sebagai anyFail (cegah circuit breaker spam abadi)
+        // DO NOT remove immediately — double-confirm on-chain first
         if (result?.error === 'liquidity zero' || result?.error === 'position burned or not found') {
-          toRemove.push(entry);
+          const confirmed = await confirmPositionClosed(provider, BigInt(entry.tokenId), 'V3');
+          if (confirmed) {
+            toRemove.push(entry);
+          } else {
+            console.warn(`  V3 #${entry.tokenId}: flagged for removal but on-chain confirmation FAILED — keeping in state`);
+          }
         } else {
           anyFail = true;
         }
@@ -463,7 +503,12 @@ async function monitorOnce(provider, config) {
         const isLegacy = result?.error?.includes('legacy');
         console.log(`  V4 #${entry.tokenId}: ${result?.error ?? 'null'}`);
         if (result?.error?.includes('position burned') || result?.error?.includes('getPositionLiquidity failed') || result?.error?.includes('liquidity zero')) {
-          toRemove.push(entry);
+          const confirmed = await confirmPositionClosed(provider, BigInt(entry.tokenId), 'V4');
+          if (confirmed) {
+            toRemove.push(entry);
+          } else {
+            console.warn(`  V4 #${entry.tokenId}: flagged for removal but on-chain confirmation FAILED — keeping in state`);
+          }
         } else if (!isLegacy) {
           anyFail = true;
         }
