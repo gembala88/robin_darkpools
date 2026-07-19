@@ -675,6 +675,168 @@ async function monitorOnce(provider, config) {
   saveState(state);
 }
 
+// ===== PERIODIC POSITION REPORT (every 5 minutes) =====
+// Sends a Telegram notification for each active position with current metrics.
+// Skips silently if no positions active. Read-only — does not modify state.
+async function sendPeriodicReport(provider) {
+  const state = loadState();
+  if (!state.positions?.length) return;
+
+  for (const entry of state.positions) {
+    try {
+      if (entry.dex === 'V3') await _reportV3(provider, entry);
+      else if (entry.dex === 'V4') await _reportV4(provider, entry);
+    } catch (e) {
+      console.error(`Periodic report error #${entry.tokenId}: ${e.shortMessage || e.message}`);
+    }
+  }
+}
+
+async function _reportV3(provider, entry) {
+  const tokenId = BigInt(entry.tokenId);
+  const pos = await getV3Position(provider, tokenId);
+  if (!pos || pos.liquidity === 0n) return;
+
+  let poolAddr;
+  if (entry.token0 && entry.token1 && entry.fee != null) {
+    try { poolAddr = await getV3PoolAddress(provider, entry.token0, entry.token1, entry.fee); } catch { return; }
+  } else { return; }
+
+  const { tick: currentTick, sqrtPriceX96 } = await getPoolSlot0(provider, poolAddr);
+  const price = tickToPrice(currentTick);
+  const entryTick = Number(entry.entryTick ?? currentTick);
+  const entryPrice = tickToPrice(entryTick);
+  const tickLower = Number(pos.tickLower);
+  const tickUpper = Number(pos.tickUpper);
+
+  const outOfRange = currentTick < tickLower || currentTick > tickUpper;
+  const rangeTotal = tickUpper - tickLower;
+  const rangePct = !outOfRange && rangeTotal > 0 ? ((currentTick - tickLower) / rangeTotal * 100).toFixed(1) : '?';
+  const statusStr = outOfRange ? `OUT OF RANGE` : `IN RANGE (${rangePct}%)`;
+
+  const ilPct = ilConcentrated(entryPrice, price, tickLower, tickUpper) * 100;
+
+  let netProfitStr = 'N/A';
+  let tpStr = 'N/A (no entry value)';
+  let feeStr = '$0.00';
+  const entryV = entry.entryValueUsd ?? null;
+
+  if (entryV !== null && entryV > 0) {
+    const currentV = await computePositionUsdValue(
+      provider, pos.liquidity, sqrtPriceX96,
+      tickLower, tickUpper, currentTick,
+      pos.tokensOwed0, pos.tokensOwed1,
+      entry.token0, entry.token1
+    );
+    if (currentV !== null && currentV > 0) {
+      const np = ((currentV - entryV) / entryV) * 100;
+      const chg = currentV - entryV;
+      netProfitStr = `${np >= 0 ? '+' : ''}${np.toFixed(2)}% (${chg >= 0 ? '+' : ''}$${chg.toFixed(2)})`;
+
+      const prices = await getTokenUsdPrices(entry.token0, entry.token1, currentTick, sqrtPriceX96, provider);
+      if (prices) {
+        const d0 = await (new Contract(entry.token0, ERC20_ABI, provider)).decimals().catch(() => 18);
+        const d1 = await (new Contract(entry.token1, ERC20_ABI, provider)).decimals().catch(() => 18);
+        const f0 = Number(formatUnits(pos.tokensOwed0, d0)) * (prices.token0Usd || 0);
+        const f1 = Number(formatUnits(pos.tokensOwed1, d1)) * (prices.token1Usd || 0);
+        feeStr = `$${(f0 + f1).toFixed(2)}`;
+      }
+
+      if (entry.tpArmed) {
+        tpStr = `ARMED at peak ${entry.tpPeak.toFixed(1)}% (trail 1%)`;
+      } else if (np >= 7) {
+        tpStr = `reached +${np.toFixed(1)}% — arming next cycle`;
+      } else {
+        tpStr = np < 0 ? `not armed (need +7%)` : `not armed (need +${(7 - np).toFixed(1)}%)`;
+      }
+    }
+  }
+
+  await tg([
+    `📊 Position Update #${entry.tokenId} (${entry.pool || '?'})`,
+    `Status: ${statusStr}`,
+    `IL: ${ilPct >= 0 ? '+' : ''}${ilPct.toFixed(2)}% | Net P&L: ${netProfitStr}`,
+    `Fees: ${feeStr}`,
+    `TP: ${tpStr}`,
+  ].join('\n'));
+}
+
+async function _reportV4(provider, entry) {
+  if (!entry.poolId && !(entry.currency0 && entry.currency1)) return;
+  const poolId = entry.poolId || computeV4PoolId({
+    currency0: entry.currency0, currency1: entry.currency1,
+    fee: entry.fee, tickSpacing: entry.tickSpacing,
+    hooks: entry.hooks || '0x0000000000000000000000000000000000000000',
+  });
+
+  const stateView = new Contract(V4.stateView, [
+    'function getSlot0(bytes32) view returns (uint160, int24, uint24, uint24)',
+  ], provider);
+  let currentTick, sqrtPriceX96;
+  try {
+    const slot0 = await stateView.getSlot0.staticCall(poolId);
+    sqrtPriceX96 = BigInt(slot0[0]);
+    currentTick = Number(slot0[1]);
+  } catch { return; }
+
+  const v4Reader = new Contract(V4_NFPM, [
+    'function getPositionLiquidity(uint256) view returns (uint128)',
+  ], provider);
+  let posLiq;
+  try { posLiq = await v4Reader.getPositionLiquidity(BigInt(entry.tokenId)); } catch { return; }
+  if (posLiq === 0n) return;
+
+  if (!entry.tickLower || !entry.tickUpper || !entry.entryTick) return;
+  const tickLower = entry.tickLower;
+  const tickUpper = entry.tickUpper;
+  const entryTick = entry.entryTick;
+
+  const price = tickToPrice(currentTick);
+  const entryPrice = tickToPrice(entryTick);
+
+  const outOfRange = currentTick < tickLower || currentTick > tickUpper;
+  const rangeTotal = tickUpper - tickLower;
+  const rangePct = !outOfRange && rangeTotal > 0 ? ((currentTick - tickLower) / rangeTotal * 100).toFixed(1) : '?';
+  const statusStr = outOfRange ? `OUT OF RANGE` : `IN RANGE (${rangePct}%)`;
+
+  const ilPct = ilConcentrated(entryPrice, price, tickLower, tickUpper) * 100;
+
+  let netProfitStr = 'N/A';
+  let tpStr = 'N/A (no entry value)';
+  const token0 = entry.currency0 || entry.token0;
+  const token1 = entry.currency1 || entry.token1;
+  const entryV = entry.entryValueUsd ?? null;
+
+  if (entryV !== null && entryV > 0 && token0 && token1) {
+    const currentV = await computePositionUsdValue(
+      provider, posLiq, sqrtPriceX96,
+      tickLower, tickUpper, currentTick,
+      0n, 0n, token0, token1
+    );
+    if (currentV !== null && currentV > 0) {
+      const np = ((currentV - entryV) / entryV) * 100;
+      const chg = currentV - entryV;
+      netProfitStr = `${np >= 0 ? '+' : ''}${np.toFixed(2)}% (${chg >= 0 ? '+' : ''}$${chg.toFixed(2)})`;
+
+      if (entry.tpArmed) {
+        tpStr = `ARMED at peak ${entry.tpPeak.toFixed(1)}% (trail 1%)`;
+      } else if (np >= 7) {
+        tpStr = `reached +${np.toFixed(1)}% — arming next cycle`;
+      } else {
+        tpStr = np < 0 ? `not armed (need +7%)` : `not armed (need +${(7 - np).toFixed(1)}%)`;
+      }
+    }
+  }
+
+  await tg([
+    `📊 Position Update #${entry.tokenId} (${entry.pool || '?'})`,
+    `Status: ${statusStr}`,
+    `IL: ${ilPct >= 0 ? '+' : ''}${ilPct.toFixed(2)}% | Net P&L: ${netProfitStr}`,
+    `Fees: $0.00 (V4)`,
+    `TP: ${tpStr}`,
+  ].join('\n'));
+}
+
 async function main() {
   const provider = await makeProvider('LP_RPC_URL');
   const config = UC('lp');
@@ -684,6 +846,10 @@ async function main() {
 
   if (isWatch) {
     console.log(`Continuous monitoring every ${config.monitorIntervalMs}ms. Ctrl+C to stop.`);
+    console.log('Periodic position report every 300s (5 min) to Telegram.');
+    setInterval(() => {
+      sendPeriodicReport(provider).catch(e => console.error('Periodic report error:', e.shortMessage || e.message));
+    }, 300000);
     while (true) {
       try { await monitorOnce(provider, config); }
       catch (e) { console.error(`Monitor error: ${e.shortMessage || e.message}`); }
