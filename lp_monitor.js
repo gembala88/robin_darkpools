@@ -17,6 +17,11 @@ const AUTO_CLOSE_DRY = process.env.AUTO_CLOSE_DRY !== '0';
 const FORCE_TRIGGER = process.env.FORCE_TRIGGER === '1';
 const LIVE = process.env.DRY === '0' && process.env.PRIVATE_KEY;
 
+// --- TP config constants ---
+const TP_ARM_THRESHOLD = 7;    // % net gain to arm
+const TP_TRAIL_DISTANCE = 1;   // % drop from peak to trigger
+const DEFAULT_POSITION_VALUE_ETH = 0.01; // standard auto-open position value
+
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { positions: [], monitor: {} }; }
 }
@@ -74,6 +79,35 @@ function sanityCheck(pos, currentTick, sqrtPriceX96) {
   return null;
 }
 
+// ===== TRAILING TAKE-PROFIT =====
+// Pure function: computes TP state from netGainPct and previous entry state.
+// Returns { tpArmed, tpPeak, tpTriggered, tpJustArmed } — caller persists to entry.
+function checkTrailingTakeProfit(netGainPct, entry) {
+  const wasArmed = entry.tpArmed === true;
+  const prevPeak = typeof entry.tpPeak === 'number' ? entry.tpPeak : 0;
+
+  let tpArmed = wasArmed;
+  let tpPeak = prevPeak;
+  let tpTriggered = false;
+  let tpJustArmed = false;
+
+  if (!wasArmed) {
+    // Belum armed — check apakah netGainPct mencapai threshold arm
+    if (netGainPct >= TP_ARM_THRESHOLD) {
+      tpArmed = true;
+      tpPeak = netGainPct;
+      tpJustArmed = true;
+    }
+  } else {
+    // Already armed — update peak if higher
+    if (netGainPct > tpPeak) tpPeak = netGainPct;
+    // Trigger jika turun >= trail distance dari peak
+    if (netGainPct <= tpPeak - TP_TRAIL_DISTANCE) tpTriggered = true;
+  }
+
+  return { tpArmed, tpPeak, tpTriggered, tpJustArmed };
+}
+
 async function getV3PoolAddress(provider, token0, token1, fee) {
   const factory = new Contract(V3.factory, ['function getPool(address,address,uint24) view returns (address)'], provider);
   return await factory.getPool(token0, token1, fee);
@@ -117,6 +151,15 @@ async function checkV3(provider, entry, config) {
   const threshold = Number(config.ilExitThresholdPct);
   const ilExceedsThreshold = ilPct < -threshold;
 
+  // --- Trailing take-profit ---
+  const positionValueEth = entry.initialValueEth || DEFAULT_POSITION_VALUE_ETH;
+  const feePct = positionValueEth > 0 ? (feeValueEth / positionValueEth) * 100 : 0;
+  const netGainPct = feePct + ilPct;
+  const tp = checkTrailingTakeProfit(netGainPct, entry);
+  // Persist TP state back to entry (saved to lp_state.json in monitorOnce)
+  entry.tpArmed = tp.tpArmed;
+  entry.tpPeak = tp.tpPeak;
+
   const result = {
     dex: 'V3',
     pool: poolSymbol,
@@ -128,16 +171,34 @@ async function checkV3(provider, entry, config) {
     entryPrice,
     ilPct,
     feeValueEth,
+    feePct,
+    netGainPct,
+    tpArmed: tp.tpArmed,
+    tpPeak: tp.tpPeak,
+    tpTriggered: tp.tpTriggered,
+    tpJustArmed: tp.tpJustArmed,
     liquidity: formatUnits(pos.liquidity, 18),
     outOfRange,
     ilExceedsThreshold,
     shouldNotify: ilExceedsThreshold || outOfRange,
   };
 
-  // AUTO-CLOSE: trigger if IL exceeds threshold + sanity passes, or FORCE_TRIGGER=1
-  const shouldTrigger = (ilExceedsThreshold && pos.liquidity > 0n) || FORCE_TRIGGER;
+  // Notify jika baru armed
+  if (tp.tpJustArmed) {
+    await tg(`\u{1F3AF} Take-profit ARMED #${entry.tokenId}: net gain ${netGainPct.toFixed(1)}% — mulai lacak puncak`).catch(() => {});
+  }
+
+  // AUTO-CLOSE: trigger if IL exceeds threshold OR TP triggered, + sanity passes, or FORCE_TRIGGER=1
+  const shouldTrigger = ((ilExceedsThreshold || tp.tpTriggered) && pos.liquidity > 0n) || FORCE_TRIGGER;
   if (shouldTrigger) {
-    const reason = FORCE_TRIGGER ? 'FORCE_TRIGGER=1' : `IL=${ilPct.toFixed(2)}% < -${threshold}%`;
+    let reason;
+    if (FORCE_TRIGGER) {
+      reason = 'FORCE_TRIGGER=1';
+    } else if (tp.tpTriggered) {
+      reason = `TAKE-PROFIT: net gain turun dari ${tp.tpPeak.toFixed(1)}% ke ${netGainPct.toFixed(1)}% (trail ${TP_TRAIL_DISTANCE}%)`;
+    } else {
+      reason = `IL=${ilPct.toFixed(2)}% < -${threshold}%`;
+    }
     console.log(`>>> ${AUTO_CLOSE_DRY ? 'AKAN auto-close' : 'AUTO-CLOSING'} #${entry.tokenId} (${reason})`);
 
     if (AUTO_CLOSE_DRY) {
@@ -147,14 +208,21 @@ async function checkV3(provider, entry, config) {
         `AKAN di-close otomatis jika AUTO_CLOSE_DRY=0`).catch(() => {});
     } else if (LIVE) {
       const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
-      await tg(`\u{1F534} AUTO-CLOSING position #${entry.tokenId}\nIL: ${ilPct.toFixed(2)}%`).catch(() => {});
+      if (tp.tpTriggered) {
+        await tg(`\u{2705} TAKE-PROFIT #${entry.tokenId}: net gain turun dari ${tp.tpPeak.toFixed(1)}% ke ${netGainPct.toFixed(1)}% (trail ${TP_TRAIL_DISTANCE}%)\n` +
+          `Posisi ditutup, profit terkunci.`).catch(() => {});
+      } else {
+        await tg(`\u{1F534} AUTO-CLOSING position #${entry.tokenId}\nIL: ${ilPct.toFixed(2)}%`).catch(() => {});
+      }
       try {
         const wdResult = await withdrawV3(provider, wallet, tokenId, config);
         result.autoClosed = true;
         const feeLine = wdResult?.fee0 ? `<code>${wdResult.fee0} ${wdResult.sym0} + ${wdResult.fee1} ${wdResult.sym1}</code>` : '';
-        await tg(`\u{2705} AUTO-CLOSED #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
-          `${feeLine ? `Fees collected: ${feeLine}\n` : ''}` +
-          `Mulai swap-back token ke ETH...`).catch(() => {});
+        if (!tp.tpTriggered) {
+          await tg(`\u{2705} AUTO-CLOSED #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
+            `${feeLine ? `Fees collected: ${feeLine}\n` : ''}` +
+            `Mulai swap-back token ke ETH...`).catch(() => {});
+        }
 
         // Auto swap-back (otomatis, tanpa flag SWAP_BACK)
         if (wdResult?.token0 && wdResult?.token1) {
@@ -240,6 +308,15 @@ async function checkV4(provider, entry, config) {
   const threshold = Number(config.ilExitThresholdPct);
   const ilExceedsThreshold = ilPct < -threshold;
 
+  // --- Trailing take-profit ---
+  // V4: feeValueEth not available from NFPM, set to 0 (conservative)
+  const positionValueEth = entry.initialValueEth || DEFAULT_POSITION_VALUE_ETH;
+  const feePct = 0;
+  const netGainPct = feePct + ilPct;
+  const tp = checkTrailingTakeProfit(netGainPct, entry);
+  entry.tpArmed = tp.tpArmed;
+  entry.tpPeak = tp.tpPeak;
+
   const sanity = sanityCheck(
     { liquidity: posLiq, tickLower: entry.tickLower, tickUpper: entry.tickUpper },
     currentTick, 1
@@ -256,16 +333,34 @@ async function checkV4(provider, entry, config) {
     price,
     entryPrice,
     ilPct,
+    feePct,
+    netGainPct,
+    tpArmed: tp.tpArmed,
+    tpPeak: tp.tpPeak,
+    tpTriggered: tp.tpTriggered,
+    tpJustArmed: tp.tpJustArmed,
     posLiquidity: posLiq.toString(),
     outOfRange,
     ilExceedsThreshold,
     shouldNotify: ilExceedsThreshold || outOfRange,
   };
 
-  // AUTO-CLOSE: trigger if IL exceeds threshold + position has liquidity, or FORCE_TRIGGER=1
-  const shouldTrigger = (ilExceedsThreshold && posLiq > 0n) || FORCE_TRIGGER;
+  // Notify jika baru armed
+  if (tp.tpJustArmed) {
+    await tg(`\u{1F3AF} Take-profit ARMED V4 #${entry.tokenId}: net gain ${netGainPct.toFixed(1)}% — mulai lacak puncak`).catch(() => {});
+  }
+
+  // AUTO-CLOSE: trigger if IL exceeds threshold OR TP triggered, or FORCE_TRIGGER=1
+  const shouldTrigger = ((ilExceedsThreshold || tp.tpTriggered) && posLiq > 0n) || FORCE_TRIGGER;
   if (shouldTrigger) {
-    const reason = FORCE_TRIGGER ? 'FORCE_TRIGGER=1' : `IL=${ilPct.toFixed(2)}% < -${threshold}%`;
+    let reason;
+    if (FORCE_TRIGGER) {
+      reason = 'FORCE_TRIGGER=1';
+    } else if (tp.tpTriggered) {
+      reason = `TAKE-PROFIT: net gain turun dari ${tp.tpPeak.toFixed(1)}% ke ${netGainPct.toFixed(1)}% (trail ${TP_TRAIL_DISTANCE}%)`;
+    } else {
+      reason = `IL=${ilPct.toFixed(2)}% < -${threshold}%`;
+    }
     console.log(`>>> ${AUTO_CLOSE_DRY ? 'AKAN auto-close' : 'AUTO-CLOSING'} V4 #${entry.tokenId} (${reason})`);
 
     if (AUTO_CLOSE_DRY) {
@@ -275,12 +370,19 @@ async function checkV4(provider, entry, config) {
         `AKAN di-close otomatis jika AUTO_CLOSE_DRY=0`).catch(() => {});
     } else if (LIVE) {
       const wallet = new Wallet(process.env.PRIVATE_KEY, provider);
-      await tg(`\u{1F534} AUTO-CLOSING V4 position #${entry.tokenId}\nIL: ${ilPct.toFixed(2)}%`).catch(() => {});
+      if (tp.tpTriggered) {
+        await tg(`\u{2705} TAKE-PROFIT V4 #${entry.tokenId}: net gain turun dari ${tp.tpPeak.toFixed(1)}% ke ${netGainPct.toFixed(1)}% (trail ${TP_TRAIL_DISTANCE}%)\n` +
+          `Posisi ditutup, profit terkunci.`).catch(() => {});
+      } else {
+        await tg(`\u{1F534} AUTO-CLOSING V4 position #${entry.tokenId}\nIL: ${ilPct.toFixed(2)}%`).catch(() => {});
+      }
       try {
         const wdResult = await withdrawV4(provider, wallet, config, entry.tokenId);
         result.autoClosed = true;
-        await tg(`\u{2705} AUTO-CLOSED V4 #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
-          `Mulai swap-back token ke ETH...`).catch(() => {});
+        if (!tp.tpTriggered) {
+          await tg(`\u{2705} AUTO-CLOSED V4 #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
+            `Mulai swap-back token ke ETH...`).catch(() => {});
+        }
 
         // Auto swap-back (otomatis, tanpa flag SWAP_BACK)
         if (wdResult?.token0 && wdResult?.token1) {
