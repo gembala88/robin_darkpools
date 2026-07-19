@@ -255,21 +255,29 @@ async function checkV3(provider, entry, config) {
       }
       try {
         const wdResult = await withdrawV3(provider, wallet, tokenId, config);
-        result.autoClosed = true;
-        const feeLine = wdResult?.fee0 ? `<code>${wdResult.fee0} ${wdResult.sym0} + ${wdResult.fee1} ${wdResult.sym1}</code>` : '';
-        if (!tp.tpTriggered) {
-          await tg(`\u{2705} AUTO-CLOSED #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
-            `${feeLine ? `Fees collected: ${feeLine}\n` : ''}` +
-            `Mulai swap-back token ke ETH...`).catch(() => {});
-        }
+        if (wdResult?._burnFailed) {
+          result.autoCloseFailed = `BURN FAILED — NFT #${entry.tokenId} masih ada (collect OK, burn tidak terjadi)`;
+          await tg(`\u{26A0}\u{FE0F} AUTO-CLOSE #${entry.tokenId}: COLLECT OK, BURN FAILED\n` +
+            `NFT ${entry.tokenId} masih dimiliki wallet.\n` +
+            `Coba burn manual atau verifikasi on-chain.`).catch(() => {});
+          // autoCloseFailed=true → monitorOnce TIDAK remove dari state, skip swap-back
+        } else {
+          result.autoClosed = true;
+          const feeLine = wdResult?.fee0 ? `<code>${wdResult.fee0} ${wdResult.sym0} + ${wdResult.fee1} ${wdResult.sym1}</code>` : '';
+          if (!tp.tpTriggered) {
+            await tg(`\u{2705} AUTO-CLOSED #${entry.tokenId} (IL=${ilPct.toFixed(2)}% < -${threshold}%)\n` +
+              `${feeLine ? `Fees collected: ${feeLine}\n` : ''}` +
+              `Mulai swap-back token ke ETH...`).catch(() => {});
+          }
 
-        // Auto swap-back (otomatis, tanpa flag SWAP_BACK)
-        if (wdResult?.token0 && wdResult?.token1) {
-          const swapResult = await swapBackAfterWithdraw(provider, wallet, [wdResult.token0, wdResult.token1], config, true);
-          result.swapBack = swapResult;
-          if (swapResult?.summary) {
-            await tg(`\u{1F504} Swap-back #${entry.tokenId}: ${swapResult.summary}` +
-              (swapResult.failed?.length ? `\n\u{26A0}\u{FE0F} Gagal: ${swapResult.failedSymbols?.join(', ') || swapResult.failed.join(', ')}` : '')).catch(() => {});
+          // Auto swap-back (otomatis, tanpa flag SWAP_BACK)
+          if (wdResult?.token0 && wdResult?.token1) {
+            const swapResult = await swapBackAfterWithdraw(provider, wallet, [wdResult.token0, wdResult.token1], config, true);
+            result.swapBack = swapResult;
+            if (swapResult?.summary) {
+              await tg(`\u{1F504} Swap-back #${entry.tokenId}: ${swapResult.summary}` +
+                (swapResult.failed?.length ? `\n\u{26A0}\u{FE0F} Gagal: ${swapResult.failedSymbols?.join(', ') || swapResult.failed.join(', ')}` : '')).catch(() => {});
+            }
           }
         }
       } catch (e) {

@@ -64,6 +64,27 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
   let collected0 = 0n;
   let collected1 = 0n;
 
+  // === EXPLICIT NONCE TRACKING ===
+  // Get starting nonce ONCE from provider, then increment manually.
+  // This prevents FallbackProvider desync — jika RPC switching mid-flow,
+  // nonce tetap konsisten karena kita tidak re-query setiap step.
+  const nfpmSigner = nfpm.connect(wallet);
+  let nonce = await wallet.getNonce('pending');
+  console.log(`  Starting nonce: ${nonce}`);
+
+  // Small helper to wait + verify receipt
+  const sendAndVerify = async (label, txPromise, expectedOk = true) => {
+    const tx = await txPromise;
+    console.log(`  ${label} tx: ${tx.hash} (nonce ${nonce})`);
+    const receipt = await tx.wait();
+    const ok = receipt.status === 1;
+    console.log(`  ${label} done — ${ok ? 'OK' : 'FAIL'} (gasUsed=${receipt.gasUsed?.toString() || '?'})`);
+    if (expectedOk && !ok) throw new Error(`${label} FAILED (status=0)`);
+    nonce++;  // explicit increment — no re-query
+    await new Promise(r => setTimeout(r, 300));  // RPC state sync cooldown
+    return receipt;
+  };
+
   if (pos.liquidity === 0n) {
     console.log('  Liquidity already 0, skipping decreaseLiquidity');
     collected0 = pos.tokensOwed0;
@@ -78,13 +99,7 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
       amount1Min: 0n,
       deadline: BigInt(Math.floor(Date.now() / 1000) + config.deadlineSec),
     };
-    const decPop = await nfpm.decreaseLiquidity.populateTransaction(decParams);
-    const decGas = await wallet.estimateGas(decPop);
-    console.log(`  Est gas: ${decGas}`);
-    const decTx = await wallet.sendTransaction(decPop);
-    console.log(`  decreaseLiquidity tx: ${decTx.hash}`);
-    await decTx.wait();
-    console.log('  decrease done');
+    await sendAndVerify('decreaseLiquidity', nfpmSigner.decreaseLiquidity(decParams, { nonce }));
 
     // Re-read tokens owed after decrease (fees may have accrued during decrease)
     const pos2 = await nfpm.positions.staticCall(tokenId);
@@ -100,26 +115,43 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
     amount0Max: (1n << 128n) - 1n,
     amount1Max: (1n << 128n) - 1n,
   };
-  const colPop = await nfpm.collect.populateTransaction(colParams);
   try {
-    const colTx = await wallet.sendTransaction(colPop);
-    console.log(`  collect tx: ${colTx.hash}`);
-    await colTx.wait();
-    console.log(`  collect done — ${formatUnits(collected0, decimals0)} ${sym0} + ${formatUnits(collected1, decimals1)} ${sym1}`);
+    await sendAndVerify('collect', nfpmSigner.collect(colParams, { nonce }));
+    console.log(`  Collected: ${formatUnits(collected0, decimals0)} ${sym0} + ${formatUnits(collected1, decimals1)} ${sym1}`);
   } catch (e) {
-    console.log(`  collect failed (may be fine): ${e.shortMessage?.slice(0,60) || e.message?.slice(0,60)}`);
+    console.log(`  collect FAILED: ${e.shortMessage?.slice(0,60) || e.message?.slice(0,60)}`);
+    throw e;  // DO NOT proceed to burn jika collect gagal — tokensOwed masih >0, burn pasti revert
   }
 
-  // Step 3: burn (optional)
+  // Step 3: burn + VERIFY
   console.log('\n  Step 3: burn...');
-  const burnPop = await nfpm.burn.populateTransaction(tokenId);
   try {
-    const burnTx = await wallet.sendTransaction(burnPop);
-    console.log(`  burn tx: ${burnTx.hash}`);
-    await burnTx.wait();
-    console.log('  NFT burned');
+    await sendAndVerify('burn', nfpmSigner.burn(tokenId, { nonce }));
+
+    // === POST-BURN VERIFICATION ===
+    // ownerOf harus revert jika NFT sudah dibakar. Jika tidak revert,
+    // burn genuinely gagal — warn dan jangan klaim sukses.
+    try {
+      const stillOwner = await nfpm.ownerOf.staticCall(tokenId);
+      throw new Error(`BURN VERIFICATION FAILED: NFT #${tokenId} masih dimiliki ${stillOwner} — burn tidak benar-benar terjadi!`);
+    } catch (e) {
+      if (e.message?.includes('BURN VERIFICATION FAILED')) throw e;  // propagate
+      // Expected: ownerOf revert = NFT sudah dibakar
+      console.log('  NFT burned — verified (ownerOf revert)');
+    }
   } catch (e) {
-    console.log(`  burn failed (expected if liquidity>0): ${e.shortMessage?.slice(0,60) || e.message?.slice(0,60)}`);
+    if (e.message?.includes('BURN VERIFICATION FAILED')) {
+      console.error(`\n  ${e.message}`);
+      // Kembalikan collected fees TAPI tandai bahwa burn gagal
+      return {
+        fee0: formatUnits(collected0, decimals0),
+        fee1: formatUnits(collected1, decimals1),
+        sym0, sym1, token0: pos.token0, token1: pos.token1,
+        _burnFailed: true,
+      };
+    }
+    console.log(`  burn tx failed: ${e.shortMessage?.slice(0,60) || e.message?.slice(0,60)}`);
+    throw e;
   }
 
   // Show final balances
