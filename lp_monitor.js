@@ -46,8 +46,11 @@ function ilConcentrated(entryPrice, currentPrice, tickLower, tickUpper) {
   const priceLower = tickToPrice(tickLower);
   const priceUpper = tickToPrice(tickUpper);
 
-  if (currentPrice <= priceLower) return -(1 - 1 / r);
+  // Below range: position fully in token0, value drops with price
+  if (currentPrice <= priceLower) return 1 - 1 / r;
+  // Above range: position fully in token1, value drops as r rises
   if (currentPrice >= priceUpper) return -(r - 1);
+  // In range: standard concentrated LP formula
   return 2 * sqrtR / (1 + r) - 1;
 }
 
