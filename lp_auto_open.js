@@ -19,6 +19,7 @@ import { V3, V4, V4_NFPM, NATIVE, UC } from './config.js';
 import { ERC20_ABI, V3_SWAP_ROUTER_ABI, V3_QUOTERV2_ABI, V3_NFPM_ABI, V4_NFPM_ABI } from './abis.js';
 import { tgScreener } from './telegram.js';
 import { depositV3, depositV4, loadState as loadLpState, saveState as saveLpState } from './lp_deposit.js';
+import { lookupV4Pool } from './v4_pool_scanner.js';
 
 const AUTO_OPEN_DRY = 0; // Phase 2: real execution after user review
 
@@ -92,8 +93,29 @@ export async function enrichPoolData(po, provider) {
     }
   }
 
-  // V4 — cannot determine fee/tickSpacing from DexScreener alone in Phase 1
-  console.warn(`  enrichPoolData V4 ${poolAddr.slice(0, 14)}: partial (fee/tickSpacing unknown)`);
+  // V4 — look up poolId in v4_pool_registry (from Initialize events)
+  const regEntry = lookupV4Pool(poolAddr);
+  if (regEntry) {
+    console.log(`  enrichPoolData V4 ${poolAddr.slice(0, 14)}: registry match — fee=${regEntry.fee} (${(regEntry.fee/10000).toFixed(4)}%) tickSpacing=${regEntry.tickSpacing}`);
+    const [d0, d1] = await Promise.all([
+      readDecimals(regEntry.currency0, provider),
+      readDecimals(regEntry.currency1, provider),
+    ]);
+    return {
+      dex: 'V4',
+      currency0: regEntry.currency0,
+      currency1: regEntry.currency1,
+      fee: regEntry.fee,
+      tickSpacing: regEntry.tickSpacing,
+      hooks: regEntry.hooks,
+      decimals0: d0,
+      decimals1: d1,
+      poolAddr,
+      partial: false,
+    };
+  }
+
+  console.warn(`  enrichPoolData V4 ${poolAddr.slice(0, 14)}: partial (poolId not yet in registry — will auto-populate on next scan cycle)`);
   return {
     dex: 'V4',
     currency0: po.baseToken?.address,

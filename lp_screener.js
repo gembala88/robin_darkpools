@@ -6,6 +6,7 @@ import { tgScreener } from './telegram.js';
 import { checkGMGN } from './gmgn.js';
 import { makeProvider } from './provider.js';
 import { autoOpenExecute, checkAutoOpenConditions, enrichPoolData, recordTrendSnapshot } from './lp_auto_open.js';
+import { scanV4Pools } from './v4_pool_scanner.js';
 
 const DEXSCREENER_PROFILES = 'https://api.dexscreener.com/token-profiles/latest/v1';
 const DEXSCREENER_BOOSTS = 'https://api.dexscreener.com/token-boosts/latest/v1';
@@ -982,6 +983,7 @@ async function main() {
   // --- Schedule loops ---
   let lastFetchRun = Date.now();
   let lastSummaryRun = Date.now();
+  let lastV4ScanRun = 0;
 
   const interval = setInterval(async () => {
     try {
@@ -1003,6 +1005,17 @@ async function main() {
       if (now - lastSummaryRun > summaryMs) {
         await sendSummary();
         lastSummaryRun = now;
+      }
+
+      // V4 pool registry scan (every ~15 min, incremental from last scanned block)
+      if (now - lastV4ScanRun > 900_000) {
+        try {
+          const r = await scanV4Pools();
+          console.log(`[v4_registry] ${r.total} pools known (${r.scanned} new this cycle)`);
+        } catch (e) {
+          console.error(`[v4_registry] scan error: ${e.shortMessage || e.message}`);
+        }
+        lastV4ScanRun = now;
       }
     } catch (err) {
       const msg = err.shortMessage || err.message;
