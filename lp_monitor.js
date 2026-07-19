@@ -41,7 +41,7 @@ function tickToPrice(tick) {
   return 1.0001 ** tick;
 }
 
-function ilConcentrated(entryPrice, currentPrice, tickLower, tickUpper) {
+export function ilConcentrated(entryPrice, currentPrice, tickLower, tickUpper) {
   const r = currentPrice / entryPrice;
   const sqrtR = sqrt(r);
   const priceLower = tickToPrice(tickLower);

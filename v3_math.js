@@ -52,9 +52,10 @@ export function getSqrtRatioAtTick(tick) {
     }
   }
   if (tick > 0n) {
-    ratio = 0x100000000000000000000000000000000n / ratio;
+    const MAX_UINT256 = (1n << 256n) - 1n;
+    ratio = MAX_UINT256 / ratio;
   }
-  return ratio;
+  return ratio >> 32n;
 }
 
 // ===== GET AMOUNTS FOR LIQUIDITY =====
