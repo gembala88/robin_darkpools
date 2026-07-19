@@ -702,6 +702,14 @@ async function _reportV3(provider, entry) {
     try { poolAddr = await getV3PoolAddress(provider, entry.token0, entry.token1, entry.fee); } catch { return; }
   } else { return; }
 
+  const t0 = new Contract(entry.token0, ERC20_ABI, provider);
+  const t1 = new Contract(entry.token1, ERC20_ABI, provider);
+  const [sym0, sym1] = await Promise.all([
+    t0.symbol().catch(() => entry.token0.slice(0, 10)),
+    t1.symbol().catch(() => entry.token1.slice(0, 10)),
+  ]);
+  const pairLabel = `${sym0}/${sym1}`;
+
   const { tick: currentTick, sqrtPriceX96 } = await getPoolSlot0(provider, poolAddr);
   const price = tickToPrice(currentTick);
   const entryTick = Number(entry.entryTick ?? currentTick);
@@ -753,7 +761,7 @@ async function _reportV3(provider, entry) {
   }
 
   await tg([
-    `📊 Position Update #${entry.tokenId} (${entry.pool || '?'})`,
+    `📊 Position Update #${entry.tokenId} (${pairLabel})`,
     `Status: ${statusStr}`,
     `IL: ${ilPct >= 0 ? '+' : ''}${ilPct.toFixed(2)}% | Net P&L: ${netProfitStr}`,
     `Fees: ${feeStr}`,
@@ -805,6 +813,13 @@ async function _reportV4(provider, entry) {
   let tpStr = 'N/A (no entry value)';
   const token0 = entry.currency0 || entry.token0;
   const token1 = entry.currency1 || entry.token1;
+  const t0 = new Contract(token0, ERC20_ABI, provider);
+  const t1 = new Contract(token1, ERC20_ABI, provider);
+  const [sym0, sym1] = await Promise.all([
+    t0.symbol().catch(() => token0.slice(0, 10)),
+    t1.symbol().catch(() => token1.slice(0, 10)),
+  ]);
+  const pairLabel = `${sym0}/${sym1}`;
   const entryV = entry.entryValueUsd ?? null;
 
   if (entryV !== null && entryV > 0 && token0 && token1) {
@@ -829,7 +844,7 @@ async function _reportV4(provider, entry) {
   }
 
   await tg([
-    `📊 Position Update #${entry.tokenId} (${entry.pool || '?'})`,
+    `📊 Position Update #${entry.tokenId} (${pairLabel})`,
     `Status: ${statusStr}`,
     `IL: ${ilPct >= 0 ? '+' : ''}${ilPct.toFixed(2)}% | Net P&L: ${netProfitStr}`,
     `Fees: $0.00 (V4)`,
