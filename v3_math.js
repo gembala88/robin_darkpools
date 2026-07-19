@@ -40,8 +40,9 @@ const MAGIC = [
 ];
 
 export function getSqrtRatioAtTick(tick) {
+  tick = BigInt(tick);
   if (tick < TICK_MIN || tick > TICK_MAX) throw new Error(`tick ${tick} out of range`);
-  const tickAbs = tick < 0 ? -tick : tick;
+  const tickAbs = tick < 0n ? -tick : tick;
   let ratio = tickAbs & 0x1n
     ? 0xfffcb933bd6fad37aa2d162d1a594001n
     : 0x100000000000000000000000000000000n;
@@ -50,7 +51,7 @@ export function getSqrtRatioAtTick(tick) {
       ratio = (ratio * value) >> 128n;
     }
   }
-  if (tick > 0) {
+  if (tick > 0n) {
     ratio = 0x100000000000000000000000000000000n / ratio;
   }
   return ratio;
@@ -59,35 +60,38 @@ export function getSqrtRatioAtTick(tick) {
 // ===== GET AMOUNTS FOR LIQUIDITY =====
 // Returns { amount0, amount1 } (as BigInts in token decimals)
 export function getAmountsForLiquidity(liquidity, sqrtPriceX96, tickLower, tickUpper) {
-  const sqrtP = BigInt(sqrtPriceX96);
+  liquidity = BigInt(liquidity);
+  sqrtPriceX96 = BigInt(sqrtPriceX96);
   const sqrtPL = getSqrtRatioAtTick(tickLower);
   const sqrtPU = getSqrtRatioAtTick(tickUpper);
 
-  if (sqrtP <= sqrtPL) {
+  if (sqrtPriceX96 <= sqrtPL) {
     // Below range — all token0
     const amount0 = liquidity * Q96 * (sqrtPU - sqrtPL) / (sqrtPL * sqrtPU);
     return { amount0, amount1: 0n };
   }
-  if (sqrtP >= sqrtPU) {
+  if (sqrtPriceX96 >= sqrtPU) {
     // Above range — all token1
     const amount1 = liquidity * (sqrtPU - sqrtPL) / Q96;
     return { amount0: 0n, amount1 };
   }
   // In range
-  const amount0 = liquidity * Q96 * (sqrtPU - sqrtP) / (sqrtP * sqrtPU);
-  const amount1 = liquidity * (sqrtP - sqrtPL) / Q96;
+  const amount0 = liquidity * Q96 * (sqrtPU - sqrtPriceX96) / (sqrtPriceX96 * sqrtPU);
+  const amount1 = liquidity * (sqrtPriceX96 - sqrtPL) / Q96;
   return { amount0, amount1 };
 }
 
 // ===== TICK → PRICE (token1 per token0) =====
 // Returns a JavaScript Number (float, approximate — sufficient for USD display)
 export function tickToPrice(tick) {
+  tick = Number(tick);
   return 1.0001 ** tick;
 }
 
 // ===== SQRT PRICE X96 → PRICE (token1 per token0) =====
 // Returns a BigInt scaled by 1e18 (for USD calculations)
 export function sqrtPriceX96ToPrice(sqrtPriceX96) {
+  sqrtPriceX96 = BigInt(sqrtPriceX96);
   const Q192 = Q96 * Q96;
   return sqrtPriceX96 * sqrtPriceX96;  // in Q192
 }
