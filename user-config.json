@@ -81,7 +81,7 @@
     "rangeSymmetricPct": 15,
     "rangeDownPct": 20,
     "slippagePct": 1,
-    "deadlineSec": 300,
+    "deadlineSec": 1800,
     "ilExitThresholdPct": 10,
     "monitorIntervalMs": 25000,
     "maxConsecutiveFails": 3,

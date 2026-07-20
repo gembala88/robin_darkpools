@@ -19,6 +19,7 @@ import { V3, V4, V4_NFPM, NATIVE, UC } from './config.js';
 import { ERC20_ABI, V3_SWAP_ROUTER_ABI, V3_QUOTERV2_ABI, V3_NFPM_ABI, V4_NFPM_ABI } from './abis.js';
 import { tgScreener } from './telegram.js';
 import { depositV3, depositV4, loadState as loadLpState, saveState as saveLpState } from './lp_deposit.js';
+import { swapBackAfterWithdraw } from './lp_withdraw.js';
 import { lookupV4Pool } from './v4_pool_scanner.js';
 
 const AUTO_OPEN_DRY = 0; // Phase 2: real execution after user review
@@ -668,6 +669,26 @@ export async function autoOpenExecute(po, provider) {
     const errMsg = 'Deposit failed';
     console.log(`  ${errMsg}`);
     await tgScreener(`❌ <b>AUTO-OPEN FAILED</b> — ${sym}\n${errMsg}`).catch(() => {});
+
+    // === Dangling token recovery ===
+    // Jika swap sukses tapi deposit gagal, wallet punya leftover tokens.
+    // Swap balik ke ETH supaya dana tidak tersangkut.
+    console.log(`\n--- Dangling token recovery: swap leftover tokens → ETH ---`);
+    try {
+      const leftoverTokens = [];
+      if (poolInfo.token0) leftoverTokens.push(poolInfo.token0);
+      if (poolInfo.token1) leftoverTokens.push(poolInfo.token1);
+      // swapBackAfterWithdraw akan skip token dengan balance 0
+      const recovery = await swapBackAfterWithdraw(provider, wallet, leftoverTokens, config, true);
+      if (recovery.swapped?.length > 0) {
+        console.log(`  ✅ Recovery swapped ${recovery.swapped.length} token(s) back to ETH`);
+      } else {
+        console.log(`  No dangling tokens found (balances already 0)`);
+      }
+    } catch (recoverErr) {
+      console.log(`  ⚠️ Recovery warning: ${recoverErr.shortMessage || recoverErr.message || recoverErr}`);
+      // Jangan throw — deposit sudah gagal, recovery failure tidak mengubah itu
+    }
     return null;
   }
 

@@ -89,29 +89,74 @@ async function fetchBatchPools(addrs) {
 
 // ===== DISCOVER POOLS (ON-CHAIN) =====
 
-async function discoverV3Pools(provider, fromBlock, toBlock) {
-  const out = [];
-  if (fromBlock > toBlock) return out;
-  const step = 500_000;
-  for (let s = fromBlock; s <= toBlock; s += step) {
-    const e = Math.min(s + step - 1, toBlock);
+// ===== V3 POOL Discovery (incremental, checkpointed) =====
+// Pola identik seedFromV4Registry: scan PoolCreated dari V3 factory,
+// filter hanya pool dengan WETH/USDG, batch-fetch DexScreener.
+// Chunk 100K block/cycle (RPC limit) — lebih besar akan "could not coalesce".
+async function seedFromV3Pools() {
+  if (!state.v3Scan) {
+    state.v3Scan = { lastBlock: 1, batchSize: 100_000, done: false };
+  }
+  if (state.v3Scan.done) return { seeded: 0, remaining: 0, done: true };
+
+  const provider = await makeProvider('LP_SCREENER_RPC_URL');
+  const currentBlock = await provider.getBlockNumber();
+  let fromBlock = state.v3Scan.lastBlock;
+  if (fromBlock >= currentBlock) {
+    state.v3Scan.done = true;
+    console.log(`[v3Scan] DONE — scanned to current block ${currentBlock}`);
+    return { seeded: 0, remaining: 0, done: true };
+  }
+
+  // Accumulate pool addresses from this chunk
+  const poolAddrs = new Set();
+  const step = state.v3Scan.batchSize;
+
+  for (let s = fromBlock; s < fromBlock + step && s < currentBlock; s += step) {
+    const e = Math.min(s + step - 1, currentBlock - 1);
     try {
       const logs = await Promise.race([
         provider.getLogs({ address: V3_FACTORY, topics: [V3_POOL_CREATED], fromBlock: s, toBlock: e }),
         new Promise((_, rej) => setTimeout(() => rej(new Error('getLogs timeout 15s')), 15000))
       ]);
       for (const lg of logs) {
-        const token0 = getAddress('0x' + lg.topics[1].slice(26));
-        const token1 = getAddress('0x' + lg.topics[2].slice(26));
-        const fee = Number(BigInt(lg.topics[3]));
-        const [tickSpacing, pool] = coder.decode(['int24', 'address'], lg.data);
-        out.push({ pool: lc(pool), token0: lc(token0), token1: lc(token1), fee, tickSpacing, version: 'v3', block: lg.blockNumber });
+        const t0 = '0x' + lg.topics[1].slice(26).toLowerCase();
+        const t1 = '0x' + lg.topics[2].slice(26).toLowerCase();
+        if (!KNOWN_STABLES.has(t0) && !KNOWN_STABLES.has(t1)) continue;
+        const poolAddr = '0x' + lg.data.slice(-40).toLowerCase();
+        if (!state.pools[poolAddr]) poolAddrs.add(poolAddr);
       }
     } catch (err) {
       console.log(`  V3 scan chunk ${s}-${e} error: ${err.shortMessage || err.message}`);
+      // Don't advance cursor — retry next cycle
+      return { seeded: 0, remaining: currentBlock - fromBlock, error: true };
     }
   }
-  return out;
+
+  state.v3Scan.lastBlock = Math.min(fromBlock + step, currentBlock);
+  if (state.v3Scan.lastBlock >= currentBlock) state.v3Scan.done = true;
+
+  if (poolAddrs.size === 0) {
+    const remaining = currentBlock - state.v3Scan.lastBlock;
+    if (remaining <= 0) state.v3Scan.done = true;
+    return { seeded: 0, remaining: remaining > 0 ? remaining : 0 };
+  }
+
+  // Batch-fetch DexScreener untuk semua pool address baru
+  const pairs = await fetchBatchPools([...poolAddrs]);
+  let newPools = 0;
+  for (const p of pairs) {
+    const key = lc(p.pairAddress);
+    if (!state.pools[key]) {
+      state.pools[key] = poolFromDSPair(p);
+      state.pools[key].discoveredAt = Date.now();
+      newPools++;
+    }
+  }
+
+  const remaining = state.v3Scan.done ? 0 : currentBlock - state.v3Scan.lastBlock;
+  console.log(`[v3Scan] ${newPools} new from ${poolAddrs.size} candidates (at block ${state.v3Scan.lastBlock}, ${remaining} remaining)`);
+  return { seeded: newPools, remaining };
 }
 
 async function discoverV4Pools(provider, fromBlock, toBlock) {
@@ -1153,6 +1198,13 @@ async function main() {
     saveState();
   }
 
+  // --- Initial V3 factory scan burst (5 chunk = 500K blocks) ---
+  for (let i = 0; i < 5; i++) {
+    const v3 = await seedFromV3Pools();
+    if (v3.seeded > 0 || v3.done) saveState();
+    if (v3.done || v3.error) break;
+  }
+
   // --- Initial evaluation ---
   console.log('\n=== Initial Evaluation ===');
   const init = await evaluatePools();
@@ -1166,6 +1218,7 @@ async function main() {
   let lastFetchRun = Date.now();
   let lastSummaryRun = Date.now();
   let lastV4ScanRun = 0;
+  let lastV3ScanRun = 0;
 
   const interval = setInterval(async () => {
     try {
@@ -1201,6 +1254,19 @@ async function main() {
           console.error(`[v4_registry] scan error: ${e.shortMessage || e.message}`);
         }
         lastV4ScanRun = now;
+      }
+
+      // V3 factory scan (every ~15 min, incremental 100K block chunks)
+      if (now - lastV3ScanRun > 900_000) {
+        try {
+          const v3 = await seedFromV3Pools();
+          if (v3.seeded > 0 || v3.done) saveState();
+          if (v3.done) console.log('[v3Scan] DONE — all V3 pools discovered');
+          else if (v3.seeded > 0) console.log(`[v3Scan] ${v3.seeded} new pools`);
+        } catch (e) {
+          console.error(`[v3Scan] error: ${e.shortMessage || e.message}`);
+        }
+        lastV3ScanRun = now;
       }
     } catch (err) {
       const msg = err.shortMessage || err.message;

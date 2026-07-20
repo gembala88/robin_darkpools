@@ -194,6 +194,47 @@ export function computeLiquidity(amount0, amount1, sqrtPriceX96, currentTick, ti
   return L0 < L1 ? L0 : L1;
 }
 
+// ===== SAFE BROADCAST: simulate FIRST, send ONLY if simulation passes =====
+// Core safety principle — every on-chain state-changing tx MUST go through
+// this to avoid burning gas on predictably failing transactions.
+// Returns { ok, receipt, tx: hash } or { ok: false, reason }.
+export async function simulateAndSend(wallet, provider, popTx, label = 'tx') {
+  const from = wallet.address;
+  const simTx = { from, to: popTx.to, data: popTx.data, value: popTx.value || 0n };
+  try {
+    await provider.call(simTx);
+  } catch (e) {
+    const reason = e.shortMessage || e.message || 'unknown revert';
+    console.log(`  ⛔ ${label}: simulation REVERTED — ${reason} (tx NOT sent — gas saved)`);
+    return { ok: false, reason };
+  }
+
+  // Simulation passed — now broadcast with 20% gas buffer
+  let gasLimit;
+  try { gasLimit = await wallet.estimateGas(popTx); gasLimit = gasLimit * 120n / 100n; }
+  catch { gasLimit = 500000n; }
+  const tx = await wallet.sendTransaction({ ...popTx, gasLimit });
+  console.log(`  ${label} tx: ${tx.hash}`);
+  const receipt = await tx.wait();
+  const ok = receipt.status === 1;
+  if (ok) {
+    console.log(`  ${label} OK (gasUsed=${receipt.gasUsed})`);
+  } else {
+    console.log(`  ❌ ${label} FAILED (status=0, gasUsed=${receipt.gasUsed})`);
+  }
+  return { ok, receipt, tx: tx.hash, gasUsed: receipt.gasUsed };
+}
+
+// Compute a robust deadline that uses chain time (NOT Date.now) as base,
+// so clock drift between bot and chain doesn't cause "Transaction too old".
+export async function computeDeadline(provider, deadlineSec) {
+  const latest = await provider.getBlock('latest');
+  const chainBase = latest.timestamp;    // chain wall-clock
+  const localBase = Math.floor(Date.now() / 1000);
+  const base = chainBase > localBase ? chainBase : localBase; // max of both
+  return BigInt(base + deadlineSec);
+}
+
 export async function depositV3(provider, wallet, config, poolInfo = null) {
   const useDefault = !poolInfo;
   const token0 = useDefault ? CASHCAT : poolInfo.token0;
@@ -248,7 +289,7 @@ export async function depositV3(provider, wallet, config, poolInfo = null) {
   const amount0Desired = bal0;
   const amount1Desired = bal1;
   const slippagePct = BigInt(config.slippagePct);
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + config.deadlineSec);
+  const deadline = await computeDeadline(provider, config.deadlineSec);
 
   let implied0 = amount0Desired, implied1 = amount1Desired;
 
@@ -332,11 +373,9 @@ export async function depositV3(provider, wallet, config, poolInfo = null) {
     deadline,
   };
   const pop = await nfpm.mint.populateTransaction(mintParams);
-  const gas = await wallet.estimateGas(pop);
-  console.log(`  Estimated gas: ${gas}`);
-  const tx = await wallet.sendTransaction(pop);
-  console.log(`  Mint tx: ${tx.hash}`);
-  const receipt = await tx.wait();
+  const result = await simulateAndSend(wallet, provider, pop, `V3 Mint ${symbol}`);
+  if (!result.ok) return null;
+  const receipt = result.receipt;
 
   const nfpmLogs = receipt.logs.filter(l => l.address.toLowerCase() === V3.nfpm.toLowerCase());
   let tokenId = null;
@@ -356,7 +395,7 @@ export async function depositV3(provider, wallet, config, poolInfo = null) {
     token0, token1, fee, entryTick, tickLower, tickUpper,
     amount0: amount0Desired.toString(), amount1: amount1Desired.toString(),
     entryValueUsd,
-    block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
+    block: receipt.blockNumber, tx: result.tx, ts: Date.now() };
   const state = loadState();
   state.positions.push(position);
   saveState(state);
@@ -520,56 +559,40 @@ export async function depositV4(provider, wallet, config, poolInfo = null) {
     }
   }
 
-  const unlockData = abi.encode(
-    ['bytes', 'bytes[]'],
-    [actions, paramsList]
-  );
-  const deadline = BigInt(Math.floor(Date.now()/1000) + 1800); // 30 menit
+  const deadline = await computeDeadline(provider, config.deadlineSec);
   const pop = await nfpm.modifyLiquidities.populateTransaction(unlockData, deadline);
-  try {
-    const tx = await wallet.sendTransaction(pop);
-    console.log(`  Mint tx: ${tx.hash}`);
-    const receipt = await tx.wait();
-    console.log(`  Status: ${receipt.status === 1 ? 'OK' : 'FAIL'}`);
+  const result = await simulateAndSend(wallet, provider, pop, `V4 Mint ${symbol}`);
+  if (!result.ok) return null;
+  const receipt = result.receipt;
+  console.log(`  Status: ${receipt.status === 1 ? 'OK' : 'FAIL'}`);
 
-    // Extract tokenId from Transfer event (same ERC-721 pattern as V3)
-    let tokenId = null;
-    for (const log of receipt.logs) {
-      if (log.address.toLowerCase() === V4_NFPM.toLowerCase() &&
-          log.topics[0] === '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef' &&
-          log.topics[1] === '0x0000000000000000000000000000000000000000000000000000000000000000') {
-        tokenId = BigInt(log.topics[3]).toString();
-        break;
-      }
+  // Extract tokenId from Transfer event (same ERC-721 pattern as V3)
+  let tokenId = null;
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() === V4_NFPM.toLowerCase() &&
+        log.topics[0] === '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef' &&
+        log.topics[1] === '0x0000000000000000000000000000000000000000000000000000000000000000') {
+      tokenId = BigInt(log.topics[3]).toString();
+      break;
     }
-    console.log(`  Token ID: ${tokenId}`);
-
-    // Compute entry USD value (V4 uses bal0/bal1 — actual amounts used)
-    const entryValueUsd = await computeEntryUsdValue(bal0, bal1, token0, token1, currentTick, decimals0, decimals1).catch(() => null);
-    if (entryValueUsd !== null) console.log(`  Entry USD value: \$${entryValueUsd.toFixed(2)}`);
-
-    const position = { dex: 'V4', pool: symbol, tokenId, entryTick: currentTick, tickLower, tickUpper,
-      currency0: poolKey.currency0, currency1: poolKey.currency1, fee: poolKey.fee,
-      tickSpacing: poolKey.tickSpacing, hooks: poolKey.hooks, poolId: computeV4PoolId(poolKey),
-      liquidity: liquidity.toString(), entryValueUsd,
-      block: receipt.blockNumber, tx: tx.hash, ts: Date.now() };
-    console.log(`  Entry USD value: \$${entryValueUsd?.toFixed(2) || 'N/A'}`);
-    const state = loadState();
-    state.positions.push(position);
-    saveState(state);
-
-    return position;
-  } catch (e) {
-    console.log(`  Tx failed: ${e.shortMessage || e.message}`);
-    const raw = e.data || e.info?.error?.data || e.error?.data;
-    if (raw && raw !== '0x') {
-      const sel = raw.slice(0, 10);
-      const known = ERROR_MAP[sel];
-      if (known) console.log(`  Error: ${known}`);
-      else console.log(`  Revert data: ${raw.slice(0, 74)}`);
-    }
-    return null;
   }
+  console.log(`  Token ID: ${tokenId}`);
+
+  // Compute entry USD value (V4 uses bal0/bal1 — actual amounts used)
+  const entryValueUsd = await computeEntryUsdValue(bal0, bal1, token0, token1, currentTick, decimals0, decimals1).catch(() => null);
+  if (entryValueUsd !== null) console.log(`  Entry USD value: \$${entryValueUsd.toFixed(2)}`);
+
+  const position = { dex: 'V4', pool: symbol, tokenId, entryTick: currentTick, tickLower, tickUpper,
+    currency0: poolKey.currency0, currency1: poolKey.currency1, fee: poolKey.fee,
+    tickSpacing: poolKey.tickSpacing, hooks: poolKey.hooks, poolId: computeV4PoolId(poolKey),
+    liquidity: liquidity.toString(), entryValueUsd,
+    block: receipt.blockNumber, tx: result.tx, ts: Date.now() };
+  console.log(`  Entry USD value: \$${entryValueUsd?.toFixed(2) || 'N/A'}`);
+  const state = loadState();
+  state.positions.push(position);
+  saveState(state);
+
+  return position;
 }
 
 // ===== GOVERNANCE PRE-CHECK =====

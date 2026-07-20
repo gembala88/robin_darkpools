@@ -12,6 +12,7 @@ import { makeProvider } from './provider.js';
 import { V3, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG, NATIVE } from './config.js';
 import { V3_NFPM_ABI, V4_NFPM_ABI, ERC20_ABI } from './abis.js';
 import { UC } from './config.js';
+import { simulateAndSend, computeDeadline } from './lp_deposit.js';
 
 const abi = AbiCoder.defaultAbiCoder();
 const STATE_FILE = new URL('./lp_state.json', import.meta.url);
@@ -64,22 +65,26 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
   let collected0 = 0n;
   let collected1 = 0n;
 
-  // === EXPLICIT NONCE TRACKING ===
+  // === EXPLICIT NONCE TRACKING + ROBUST DEADLINE ===
   // Get starting nonce ONCE from provider, then increment manually.
   // This prevents FallbackProvider desync — jika RPC switching mid-flow,
   // nonce tetap konsisten karena kita tidak re-query setiap step.
+  // Deadline computed from chain timestamp (not Date.now) to avoid clock drift.
+  const wd = await computeDeadline(provider, config.deadlineSec);
   const nfpmSigner = nfpm.connect(wallet);
   let nonce = await wallet.getNonce('pending');
   console.log(`  Starting nonce: ${nonce}`);
 
-  // Small helper to wait + verify receipt
-  const sendAndVerify = async (label, txPromise, expectedOk = true) => {
-    const tx = await txPromise;
-    console.log(`  ${label} tx: ${tx.hash} (nonce ${nonce})`);
-    const receipt = await tx.wait();
-    const ok = receipt.status === 1;
-    console.log(`  ${label} done — ${ok ? 'OK' : 'FAIL'} (gasUsed=${receipt.gasUsed?.toString() || '?'})`);
-    if (expectedOk && !ok) throw new Error(`${label} FAILED (status=0)`);
+  // Small helper: simulate populated tx FIRST, broadcast ONLY if simulation passes
+  const sendAndVerify = async (label, popTx, expectedOk = true) => {
+    const result = await simulateAndSend(wallet, provider, popTx, `${label} (nonce ${nonce})`);
+    if (!result.ok) {
+      if (expectedOk) throw new Error(`${label} simulation failed — tx not sent`);
+      return null;
+    }
+    const receipt = result.receipt;
+    console.log(`  ${label} done — ${receipt.status === 1 ? 'OK' : 'FAIL'} (gasUsed=${receipt.gasUsed?.toString() || '?'})`);
+    if (expectedOk && receipt.status !== 1) throw new Error(`${label} FAILED (status=0)`);
     nonce++;  // explicit increment — no re-query
     await new Promise(r => setTimeout(r, 300));  // RPC state sync cooldown
     return receipt;
@@ -97,9 +102,10 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
       liquidity: pos.liquidity,
       amount0Min: 0n,
       amount1Min: 0n,
-      deadline: BigInt(Math.floor(Date.now() / 1000) + config.deadlineSec),
+      deadline: wd,
     };
-    await sendAndVerify('decreaseLiquidity', nfpmSigner.decreaseLiquidity(decParams, { nonce }));
+    const decPop = await nfpmSigner.decreaseLiquidity.populateTransaction(decParams, { nonce });
+    await sendAndVerify('decreaseLiquidity', decPop);
 
     // Re-read tokens owed after decrease (fees may have accrued during decrease)
     const pos2 = await nfpm.positions.staticCall(tokenId);
@@ -116,7 +122,8 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
     amount1Max: (1n << 128n) - 1n,
   };
   try {
-    await sendAndVerify('collect', nfpmSigner.collect(colParams, { nonce }));
+    const colPop = await nfpmSigner.collect.populateTransaction(colParams, { nonce });
+    await sendAndVerify('collect', colPop);
     console.log(`  Collected: ${formatUnits(collected0, decimals0)} ${sym0} + ${formatUnits(collected1, decimals1)} ${sym1}`);
   } catch (e) {
     console.log(`  collect FAILED: ${e.shortMessage?.slice(0,60) || e.message?.slice(0,60)}`);
@@ -126,7 +133,8 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
   // Step 3: burn + VERIFY
   console.log('\n  Step 3: burn...');
   try {
-    await sendAndVerify('burn', nfpmSigner.burn(tokenId, { nonce }));
+    const burnPop = await nfpmSigner.burn.populateTransaction(tokenId, { nonce });
+    await sendAndVerify('burn', burnPop);
 
     // === POST-BURN VERIFICATION ===
     // ownerOf harus revert jika NFT sudah dibakar. Jika tidak revert,
@@ -240,23 +248,13 @@ export async function withdrawV4(provider, wallet, config, tokenId = null) {
     ['bytes', 'bytes[]'],
     [actions, paramsList]
   );
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800); // 30 menit
+  const deadline = await computeDeadline(provider, config.deadlineSec);
 
   console.log('  Calling modifyLiquidities (with auto-unlock)...');
   const pop = await nfpm.modifyLiquidities.populateTransaction(unlockData, deadline);
 
-  try {
-    const tx = await wallet.sendTransaction(pop);
-    console.log(`  Withdraw tx: ${tx.hash}`);
-    const receipt = await tx.wait();
-    console.log(`  Status: ${receipt.status === 1 ? 'OK' : 'FAIL'}`);
-  } catch (e) {
-    console.log(`  Tx failed: ${e.shortMessage || e.message}`);
-    const raw = e.data || e.info?.error?.data || e.error?.data;
-    if (raw && raw !== '0x') {
-      console.log(`  Revert data: ${raw.slice(0, 74)}`);
-    }
-  }
+  const result = await simulateAndSend(wallet, provider, pop, 'V4 Withdraw');
+  if (!result.ok) return null;
 
   // Show final balances
   const finalBal0 = await t0.balanceOf(wallet.address);
@@ -343,11 +341,9 @@ export async function swapBackAfterWithdraw(provider, wallet, tokens, config, fo
     try {
       const params = [token, WETH, fee, wallet.address, bal, amountOutMin, 0];
       const pop = await router.exactInputSingle.populateTransaction(params);
-      const tx = await wallet.sendTransaction(pop);
-      console.log(`    Swap tx: ${tx.hash}`);
-      const rc = await tx.wait();
-      console.log(`    Status: ${rc.status === 1 ? 'OK' : 'FAIL'}`);
-      if (rc.status === 1) swapped.push({ sym, token, amountIn: formatUnits(bal, dec), amountOutWeth: formatEther(amountOut), tx: tx.hash });
+      const r = await simulateAndSend(wallet, provider, pop, `${sym}→WETH`);
+      if (r.ok) swapped.push({ sym, token, amountIn: formatUnits(bal, dec), amountOutWeth: formatEther(amountOut), tx: r.tx });
+      else failed.push({ token, sym });
     } catch (e) {
       console.log(`    Swap FAILED: ${e.shortMessage || e.message}`);
       failed.push({ token, sym });
@@ -362,12 +358,13 @@ export async function swapBackAfterWithdraw(provider, wallet, tokens, config, fo
   let ethBal = null;
   if (wethBal > 0n && wallet) {
     console.log('  Unwrapping WETH → ETH...');
-    const unwrapTx = await wethC.withdraw(wethBal);
-    await unwrapTx.wait();
-    console.log(`  Unwrap tx: ${unwrapTx.hash}`);
-    ethBal = await provider.getBalance(wallet.address);
-    console.log(`  Final ETH balance: ${formatEther(ethBal)}`);
-    result.unwrapTx = unwrapTx.hash;
+    const pop = await wethC.withdraw.populateTransaction(wethBal);
+    const r = await simulateAndSend(wallet, provider, pop, 'WETH→ETH');
+    if (r.ok) {
+      result.unwrapTx = r.tx;
+      ethBal = await provider.getBalance(wallet.address);
+      console.log(`  Final ETH balance: ${formatEther(ethBal)}`);
+    }
   } else if (wethBal > 0n) {
     console.log('  DRY: would unwrap WETH → ETH');
   }
