@@ -927,7 +927,7 @@ async function evaluatePools() {
     }
 
     // Auto-open (Phase 2):
-    // Gates: trend UP, score >= 15, HHI < 7000, GMGN clean, TVL >= $20k, governance OK
+    // Gates: trend UP, score >= 15, HHI < 9500, GMGN clean, TVL >= $20k, governance OK
     // Exec provider: LP_EXEC_RPC_URL (terpisah dari LP_SCREENER_RPC_URL untuk discovery)
     const sym = po.baseToken?.symbol || '?';
     const gateScore = po.score || 0;
@@ -940,7 +940,7 @@ async function evaluatePools() {
       else if (po.hhiFailed) gateFail = `HHI belum valid (gagal ${po.hhiFailed}x, cooldown ${Math.ceil(Math.max(0, 5 - (Date.now()-po.hhiFailedAt)/60000))}min)`;
       else gateFail = `HHI belum valid (pending)`;
     }
-    else if (gateHhi >= 7000) gateFail = `HHI ${gateHhi} >= 7000`;
+    else if (gateHhi >= 9500) gateFail = `HHI ${gateHhi} >= 9500`;
     else if (!po.gmgnChecked) gateFail = 'GMGN belum dicek';
     else if (po.gmgnFlags && po.gmgnFlags.length > 0) gateFail = `GMGN flagged: ${po.gmgnFlags.join(',')}`;
     else if (gateTvl < 20000) gateFail = `TVL $${gateTvl.toLocaleString()} < $20k`;
