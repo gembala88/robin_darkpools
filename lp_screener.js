@@ -321,9 +321,70 @@ async function updatePoolData() {
   return updated;
 }
 
-// ===== ON-CHAIN DISCOVERY (DISABLED — using DexScreener only) =====
-async function runPeriodicDiscovery() {
-  return 0;
+// ===== V4 REGISTRY SEEDING (INCREMENTAL, CHECKPOINTED) =====
+// Uses v4_pool_registry.json (98K pools, on-disk) as PRIMARY source of
+// pool candidates. Extracts pairAddress from poolId first 20 bytes,
+// filters to pools with WETH or USDG, batch-fetches DexScreener data.
+// Runs 50 candidates/cycle to avoid rate-limits.
+const KNOWN_STABLES = new Set([
+  '0x0bd7d308f8e1639fab988df18a8011f41eacad73', // WETH
+  '0x5fc5360d0400a0fd4f2af552add042d716f1d168', // USDG
+]);
+async function seedFromV4Registry() {
+  if (!state.registrySeed) {
+    state.registrySeed = { cursor: 0, batchSize: 200, done: false };
+  }
+  if (state.registrySeed.done) return { seeded: 0, remaining: 0 };
+
+  let reg;
+  try { reg = JSON.parse(fs.readFileSync('./v4_pool_registry.json', 'utf8')); }
+  catch { return { seeded: 0, remaining: 0 }; }
+
+  // Build candidate list once (pools with WETH/USDG NOT yet in state)
+  if (!state.registrySeed._candidates) {
+    const allPools = Object.values(reg.pools || {});
+    const seen = new Set();
+    for (const p of allPools) {
+      const c0 = p.currency0.toLowerCase();
+      const c1 = p.currency1.toLowerCase();
+      if (!KNOWN_STABLES.has(c0) && !KNOWN_STABLES.has(c1)) continue;
+      const pairAddr = '0x' + p.poolId.slice(2, 42).toLowerCase();
+      if (state.pools[pairAddr] || seen.has(pairAddr)) continue;
+      seen.add(pairAddr);
+    }
+    state.registrySeed._candidates = [...seen];
+    state.registrySeed._total = seen.size;
+    console.log(`[v4RegistrySeed] ${seen.size} candidate pools — seeding ${state.registrySeed.batchSize}/cycle`);
+  }
+
+  const candidates = state.registrySeed._candidates;
+  const cursor = state.registrySeed.cursor;
+  if (cursor >= candidates.length) {
+    state.registrySeed.done = true;
+    delete state.registrySeed._candidates;
+    delete state.registrySeed.cursor;
+    console.log(`[v4RegistrySeed] DONE — all ${candidates.length} candidates processed`);
+    return { seeded: 0, remaining: 0 };
+  }
+
+  const chunk = candidates.slice(cursor, cursor + state.registrySeed.batchSize);
+  const pairs = await fetchBatchPools(chunk);
+  let newPools = 0;
+  for (const p of pairs) {
+    const key = lc(p.pairAddress);
+    if (!state.pools[key]) {
+      state.pools[key] = poolFromDSPair(p);
+      state.pools[key].discoveredAt = Date.now();
+      newPools++;
+    }
+  }
+
+  state.registrySeed.cursor = cursor + chunk.length;
+  const remaining = candidates.length - state.registrySeed.cursor;
+  if (newPools || cursor === 0 || remaining % 500 === 0) {
+    console.log(`[v4RegistrySeed] ${newPools} new from ${chunk.length} candidates (${remaining} remain)`);
+  }
+  return { seeded: newPools, remaining };
 }
 
 // ===== SCORING =====
@@ -1085,6 +1146,13 @@ async function main() {
     console.log(`Updated ${updated} pools`);
   }
 
+  // --- Initial V4 registry seed burst (tanpa nunggu 15 menit) ---
+  const seedInit = await seedFromV4Registry();
+  if (seedInit.remaining > 0) {
+    console.log(`[v4RegistrySeed] initial burst: ${seedInit.seeded} new, ${seedInit.remaining} remaining — continuing in main loop`);
+    saveState();
+  }
+
   // --- Initial evaluation ---
   console.log('\n=== Initial Evaluation ===');
   const init = await evaluatePools();
@@ -1126,6 +1194,9 @@ async function main() {
         try {
           const r = await scanV4Pools();
           console.log(`[v4_registry] ${r.total} pools known (${r.scanned} new this cycle)`);
+          // Setelah registry update, lanjutkan seeding state dari registry
+          const seed = await seedFromV4Registry();
+          if (seed.seeded > 0 || seed.remaining > 0) saveState();
         } catch (e) {
           console.error(`[v4_registry] scan error: ${e.shortMessage || e.message}`);
         }
