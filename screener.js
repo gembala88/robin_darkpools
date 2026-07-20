@@ -244,6 +244,10 @@ function initTokenInfo(token, factory, buyer, ethIn, blockNumber, symbol) {
     gmgnChecked: false,
     gmgnFlaggedRisk: false,
     gmgnFlags: null,
+    gmgnMcap: null,
+    gmgnVolume24h: null,
+    thesisScore: 0,
+    thesisMatch: false,
   };
 }
 
@@ -367,6 +371,36 @@ function checkCriteria(info, metrics) {
   return { passes, allOk };
 }
 
+// ===== THESIS MATCH SCORE =====
+// Bonus score untuk token yang memenuhi kriteria tambahan:
+// 1. Market cap > $500k (dari GMGN)
+// 2. Volume > $1M (24h dari GMGN atau cumulative ETH proxy)
+// 3. Exclude flap.fun (otomatis +5 karena semua token kita RobinFun)
+// 4. Utility keyword di nama/symbol (bonus opsional)
+// Skor >= 10 dari maks 20 = "THESIS MATCH"
+function computeThesisScore(info) {
+  let score = 0;
+
+  // 1. Market cap > $500k
+  const mcap = info.gmgnMcap || 0;
+  if (mcap > 500000) score += 5;
+
+  // 2. Volume > $1M (24h GMGN, atau cumulative ETH ~$2k/ETH sebagai proxy)
+  const vol24h = info.gmgnVolume24h || 0;
+  const totalEthUsd = Number(formatEther(BigInt(info.totalEthIn || '0'))) * 2000;
+  if (vol24h > 1000000 || totalEthUsd > 500000) score += 5;
+
+  // 3. Bukan flap.fun — semua token kita dari RobinFun factories, otomatis +5
+  score += 5;
+
+  // 4. Utility keyword heuristic (ringan, dari nama/symbol)
+  const sym = (info.symbol || '').toLowerCase();
+  const utilWords = ['swap', 'dao', 'vault', 'yield', 'stake', 'bridge', 'lend', 'protocol', 'pay', 'fund', 'bond', 'share', 'pool', 'farm'];
+  if (utilWords.some(w => sym.includes(w))) score += 5;
+
+  return { score, match: score >= 10 };
+}
+
 // ===== MILESTONE NOTIFICATIONS =====
 const MILESTONES = [25, 50, 75, 100];
 
@@ -451,7 +485,8 @@ async function sendPeriodicSummary() {
     lines.push(`<b>Top 5 by score:</b>`);
     for (let i = 0; i < top5.length; i++) {
       const t = top5[i];
-      lines.push(`${i + 1}. ${t.symbol} (<code>${t.token.slice(0,10)}&hellip;</code>) — ${t.compositeScore}/100 (${t.lastGradPct.toFixed(1)}%)`);
+      const badge = t.thesisMatch ? ' 💎' : '';
+      lines.push(`${i + 1}. ${t.symbol}${badge} (<code>${t.token.slice(0,10)}&hellip;</code>) — ${t.compositeScore}/100 (${t.lastGradPct.toFixed(1)}%)`);
     }
   } else {
     lines.push(`No scored tokens yet. Let data accumulate.`);
@@ -476,6 +511,9 @@ async function notifyCandidate(info, metrics) {
   const poolLine = poolExists
     ? `✅ V4 pool AKTIF — cek lp_screener untuk skor LP`
     : `<i>Pool V4 belum terdeteksi. Jalankan scan_v4_pools.mjs atau tunggu pollLogs arb.js</i>`;
+  const thesisLine = info.thesisMatch
+    ? `💎 <b>THESIS MATCH</b> (skor thesis: ${info.thesisScore}/20)${info.gmgnMcap ? ` · Mcap: $${(info.gmgnMcap/1000000).toFixed(2)}M` : ''}${info.gmgnVolume24h ? ` · Vol24h: $${(info.gmgnVolume24h/1000000).toFixed(2)}M` : ''}`
+    : '';
   const msg = [
     `🏆 <b>Pool candidate</b> — ${info.symbol} (<code>${info.token.slice(0,10)}&hellip;</code>)`,
     `<code>${info.token}</code>`,
@@ -488,11 +526,12 @@ async function notifyCandidate(info, metrics) {
     `🔄 buy/sell ratio: ${metrics.sellBuyRatio.toFixed(3)}`,
     `🛡 GMGN: ${riskFlag}`,
     `🏅 score: ${metrics.compositeScore}/100`,
-    ``,
+    ``, // always add blank line before optional lines
+    thesisLine,
     poolLine,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
   await tgScreener(msg);
-  console.log(`>>> CANDIDATE: ${info.symbol} (${info.token}) — grad=${metrics.grad}% age=${metrics.ageHours}h buyers=${metrics.buyerCount} vol=${metrics.volume1hEth} ETH score=${metrics.compositeScore} hhi=${metrics.topBuyerPct}% sellRatio=${metrics.sellBuyRatio.toFixed(3)} gmgn=${info.gmgnFlaggedRisk ? 'FLAGGED' : 'ok'}`);
+  console.log(`>>> CANDIDATE: ${info.symbol} (${info.token}) — grad=${metrics.grad}% age=${metrics.ageHours}h buyers=${metrics.buyerCount} vol=${metrics.volume1hEth} ETH score=${metrics.compositeScore} hhi=${metrics.topBuyerPct}% sellRatio=${metrics.sellBuyRatio.toFixed(3)} gmgn=${info.gmgnFlaggedRisk ? 'FLAGGED' : 'ok'} thesis=${info.thesisMatch ? '💎'+info.thesisScore : '—'}`);
 }
 
 // ===== STATE PERSISTENCE =====
@@ -719,14 +758,24 @@ async function evaluateAndNotify(provider, blockNumber, isInitial = false) {
         info.gmgnChecked = true;
         info.gmgnFlaggedRisk = g.isRisky;
         info.gmgnFlags = g.flags;
+        info.gmgnMcap = g.mcap || null;
+        info.gmgnVolume24h = g.volume24h || null;
       }
+    }
+
+    // Thesis match score (recomputed setiap siklus setelah GMGN)
+    if (info.gmgnChecked) {
+      const thesis = computeThesisScore(info);
+      info.thesisScore = thesis.score;
+      info.thesisMatch = thesis.match;
     }
 
     // Dashboard line
     if (isInitial || info.lastBuyBlock > blockNumber - 100 || info.passedCriteria) {
       const flag = allOk ? '✅' : info.notified ? '🔔' : '  ';
       const gmgnTag = info.gmgnChecked ? (info.gmgnFlaggedRisk ? '⚠GMGN' : '✓GMGN') : '  GMGN?';
-      console.log(`${flag} ${info.symbol.padEnd(10)} ${info.token.slice(0,8)}&hellip; grad=${info.lastGradPct.toFixed(1).padEnd(6)} buyers=${String(metrics.buyerCount).padEnd(3)} vol1h=${metrics.volume1hEth.toFixed(4).padEnd(10)} score=${String(metrics.compositeScore).padEnd(4)} ${allOk ? '✅ALL' : 'FAIL=' + Object.entries(passes).filter(([,v]) => !v).map(([k]) => k).join(',')} ${gmgnTag}`);
+      const thesisTag = info.thesisMatch ? '💎' : '';
+      console.log(`${flag}${thesisTag} ${info.symbol.padEnd(10)} ${info.token.slice(0,8)}&hellip; grad=${info.lastGradPct.toFixed(1).padEnd(6)} buyers=${String(metrics.buyerCount).padEnd(3)} vol1h=${metrics.volume1hEth.toFixed(4).padEnd(10)} score=${String(metrics.compositeScore).padEnd(4)} ${allOk ? '✅ALL' : 'FAIL=' + Object.entries(passes).filter(([,v]) => !v).map(([k]) => k).join(',')} ${gmgnTag}`);
     }
   }
   if (isInitial) {

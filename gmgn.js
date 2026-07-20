@@ -39,7 +39,12 @@ export async function checkGMGN(tokenAddr) {
     if (n(s.top_bundler_trader_percentage) > 0.3) flags.push('BUNDLED');
     if (n(s.top70_sniper_hold_rate) > 0.1) flags.push('SNIPER_HEAVY');
 
-    const result = { flags, isRisky: flags.length > 0, holders: info.holder_count };
+    const result = {
+      flags, isRisky: flags.length > 0,
+      holders: info.holder_count,
+      mcap: n(s.market_cap),
+      volume24h: n(s.volume_24h),
+    };
     cache.set(tokenAddr, { data: result, ts: Date.now() });
     return result;
   } catch {
