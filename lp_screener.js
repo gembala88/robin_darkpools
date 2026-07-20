@@ -456,6 +456,7 @@ async function _computeHHIImpl(poolAddr, poolState) {
 
   if (mintTxs.length === 0) {
     console.log(`  HHI: no Mint events found for ${poolAddr.slice(0, 14)}`);
+    poolState.hhiInvalidReason = 'no mint events';
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
@@ -491,6 +492,7 @@ async function _computeHHIImpl(poolAddr, poolState) {
 
   if (poolTokenIds.length === 0) {
     console.log(`  HHI: no NFPM tokenIds found via tx receipts for ${poolAddr.slice(0, 14)}`);
+    poolState.hhiInvalidReason = 'no NFPM tokenIds in receipts';
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
@@ -519,6 +521,7 @@ async function _computeHHIImpl(poolAddr, poolState) {
   const active = poolTokenIds.filter(p => p.liquidity > 0n);
   console.log(`  HHI: ${active.length}/${poolTokenIds.length} positions active`);
   if (active.length < 2) {
+    poolState.hhiInvalidReason = `<2 active positions (${active.length}/${poolTokenIds.length})`;
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
@@ -555,6 +558,7 @@ async function _computeHHIImpl(poolAddr, poolState) {
 
   if (providerCount < 2 || totalLiq === 0n) {
     console.log(`  HHI: only ${providerCount} providers found`);
+    poolState.hhiInvalidReason = `<2 providers (${providerCount})`;
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
@@ -568,6 +572,7 @@ async function _computeHHIImpl(poolAddr, poolState) {
 
   poolState.hhiScore = Math.round(hhi);
   poolState.hhiProviderCount = providerCount;
+  poolState.hhiInvalidReason = undefined; // success — clear any previous reason
   poolState.hhiChecked = true;
   poolState.hhiChecking = false;
 
@@ -621,6 +626,7 @@ async function _computeV4HHIImpl(poolId, poolState) {
   // Validate poolId — must be valid bytes32 hex
   if (!/^0x[0-9a-fA-F]{64}$/.test(poolId)) {
     console.log(`  V4 HHI skip ${poolId.slice(0, 18)}: invalid bytes32`);
+    poolState.hhiInvalidReason = 'invalid bytes32 poolId';
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
@@ -650,6 +656,7 @@ async function _computeV4HHIImpl(poolId, poolState) {
 
   if (allMods.length === 0) {
     console.log(`  V4 HHI ${poolId.slice(0, 18)}: no ModifyLiquidity events found`);
+    poolState.hhiInvalidReason = 'no ModifyLiquidity events';
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
@@ -675,6 +682,7 @@ async function _computeV4HHIImpl(poolId, poolState) {
 
   if (tokenIds.size < 2) {
     console.log(`  V4 HHI ${poolId.slice(0, 18)}: only ${tokenIds.size} tokenIds from ModifyLiquidity`);
+    poolState.hhiInvalidReason = `<2 tokenIds (${tokenIds.size})`;
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
@@ -704,6 +712,7 @@ async function _computeV4HHIImpl(poolId, poolState) {
   const tl = Object.values(ownerLiq).reduce((s, v) => s + v, 0n);
   if (pc < 2 || tl === 0n) {
     console.log(`  V4 HHI ${poolId.slice(0, 18)}: only ${pc} providers with active positions`);
+    poolState.hhiInvalidReason = `<2 providers (${pc})`;
     poolState.hhiChecked = true;
     poolState.hhiChecking = false;
     return 0;
@@ -716,6 +725,7 @@ async function _computeV4HHIImpl(poolId, poolState) {
 
   poolState.hhiScore = Math.round(hhi);
   poolState.hhiProviderCount = pc;
+  poolState.hhiInvalidReason = undefined; // success
   poolState.hhiChecked = true;
   poolState.hhiChecking = false;
 
@@ -893,7 +903,7 @@ async function evaluatePools() {
     if (po.hhiChecked && (po.hhiData === undefined || po.hhiData.hhi === undefined)) {
       const lastRetry = po.hhiRetryAt || 0;
       if (Date.now() - lastRetry > 6 * 3600 * 1000) {
-        console.log(`  HHI: resetting hhiChecked for ${po.pairAddress.slice(0, 14)} (prev: no valid data — retry after 6h)`);
+        console.log(`  HHI: resetting hhiChecked for ${po.pairAddress.slice(0, 14)} (${po.hhiInvalidReason || 'no valid data'} — retry after 6h)`);
         po.hhiChecked = false;
         po.hhiRetryAt = Date.now();
       }
@@ -936,7 +946,7 @@ async function evaluatePools() {
     let gateFail = null;
     if (gateScore < 15) gateFail = `score ${gateScore} < 15`;
     else if (gateHhi === undefined) {
-      if (po.hhiChecked) gateFail = `HHI checked but invalid (${po.hhiData ? 'hhi=null' : 'no hhiData'}, permanent)`;
+      if (po.hhiChecked) gateFail = `HHI checked but invalid (${po.hhiInvalidReason || 'no hhiData'})`;
       else if (po.hhiFailed) gateFail = `HHI belum valid (gagal ${po.hhiFailed}x, cooldown ${Math.ceil(Math.max(0, 5 - (Date.now()-po.hhiFailedAt)/60000))}min)`;
       else gateFail = `HHI belum valid (pending)`;
     }
@@ -1002,6 +1012,23 @@ async function evaluatePools() {
   }
 
   if (passed) {
+    // HHI summary diagnostic
+    const pools = Object.values(state.pools);
+    const totalHhiChecked = pools.filter(p => p.hhiChecked).length;
+    const hhiValid = pools.filter(p => p.hhiData?.hhi !== undefined).length;
+    const hhiInvalid = pools.filter(p => p.hhiChecked && p.hhiData?.hhi === undefined).length;
+    const byReason = {};
+    for (const p of pools) {
+      if (p.hhiChecked && p.hhiData?.hhi === undefined && p.hhiInvalidReason) {
+        byReason[p.hhiInvalidReason] = (byReason[p.hhiInvalidReason] || 0) + 1;
+      }
+    }
+    if (totalHhiChecked > 0) {
+      const reasonStr = Object.entries(byReason)
+        .sort((a, b) => b[1] - a[1])
+        .map(([r, c]) => `${r}=${c}`).join(', ');
+      console.log(`  HHI stats: checked=${totalHhiChecked}, valid=${hhiValid}, invalid=${hhiInvalid} (${reasonStr || 'no reason stored'})`);
+    }
     console.log(`evaluated: ${scored} scored, ${passed} passed filters, ${notified} new candidates`);
   }
   return { scored, passed, notified };
