@@ -159,6 +159,28 @@ export function computeTickRange(currentTick, symmetricPct, tickSpacing) {
   return { tickLower, tickUpper };
 }
 
+// Compute tick range for single-side-eth (defensive) mode.
+// Range positioned so that 100% of liquidity is WETH at deposit time:
+//   - If token0=WETH: range ABOVE current tick (tickLower > currentTick)
+//   - If token1=WETH: range BELOW current tick (tickUpper < currentTick)
+// Uses same symmetricPct for range width.
+export function computeSingleSideWethRange(currentTick, symmetricPct, tickSpacing, token0, token1, wethAddr) {
+  const halfRangeTicks = Math.floor(Math.log(1 + symmetricPct / 100) / Math.log(1.0001));
+  const halfRangeAligned = Math.ceil(halfRangeTicks / tickSpacing) * tickSpacing;
+  const rangeWidth = halfRangeAligned * 2;
+
+  if (token0.toLowerCase() === wethAddr.toLowerCase()) {
+    // WETH is token0 → range ABOVE current → 100% WETH below range
+    const alignedCurrent = Math.floor(currentTick / tickSpacing) * tickSpacing;
+    const tickLower = alignedCurrent + tickSpacing;
+    return { tickLower, tickUpper: tickLower + rangeWidth };
+  }
+  // WETH is token1 → range BELOW current → 100% WETH above range
+  const alignedCurrent = Math.ceil(currentTick / tickSpacing) * tickSpacing;
+  const tickUpper = alignedCurrent - tickSpacing;
+  return { tickLower: tickUpper - rangeWidth, tickUpper };
+}
+
 // Two-sided liquidity: min(L0, L1) using standard V3 formula.
 // amount0 = CASHCAT, amount1 = WETH.
 export function computeLiquidity(amount0, amount1, sqrtPriceX96, currentTick, tickLower, tickUpper) {
@@ -196,7 +218,20 @@ export async function depositV3(provider, wallet, config, poolInfo = null) {
 
   const currentTick = await getV3Tick(provider, poolAddr);
   const entryTick = currentTick;
-  const { tickLower, tickUpper } = computeTickRange(currentTick, symmetricPct, tickSpacing);
+
+  const depositMode = config?.depositMode || 'in-range';
+  let tickLower, tickUpper;
+  if (depositMode === 'single-side-eth') {
+    const wethLabel = token0.toLowerCase() === WETH.toLowerCase() ? symbol.split('/')[0] : symbol.split('/')[1];
+    const r = computeSingleSideWethRange(currentTick, symmetricPct, tickSpacing, token0, token1, WETH);
+    tickLower = r.tickLower;
+    tickUpper = r.tickUpper;
+    console.log(`  DEPOSIT MODE: single-side-eth (100% ${wethLabel} until price enters range)`);
+  } else {
+    const r = computeTickRange(currentTick, symmetricPct, tickSpacing);
+    tickLower = r.tickLower;
+    tickUpper = r.tickUpper;
+  }
 
   const slot0 = await provider.call({ to: poolAddr, data: '0x3850c7bd' });
   const [sqrtPriceX96] = AbiCoder.defaultAbiCoder().decode(['uint160'], slot0.slice(0, 66));
@@ -215,41 +250,58 @@ export async function depositV3(provider, wallet, config, poolInfo = null) {
   const slippagePct = BigInt(config.slippagePct);
   const deadline = BigInt(Math.floor(Date.now() / 1000) + config.deadlineSec);
 
-  // Detailed liquidity debug
-  const sqrtPX96 = BigInt(sqrtPriceX96);
-  const sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, sqrtPX96);
-  const sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, sqrtPX96);
-  const Q96 = 1n << 96n;
-  const L0_debug = amount0Desired * sqrtPX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPX96) * Q96);
-  const L1_debug = amount1Desired * Q96 / (sqrtPX96 - sqrtPaX96);
-  const expectedLiquidity = L0_debug < L1_debug ? L0_debug : L1_debug;
-  // Back-calculate implied amounts from L
   let implied0 = amount0Desired, implied1 = amount1Desired;
-  if (expectedLiquidity === L0_debug) {
-    implied1 = expectedLiquidity * (sqrtPX96 - sqrtPaX96) / Q96;
+
+  if (depositMode === 'single-side-eth') {
+    // Single-sided: price is outside the range, so standard L0/L1 math doesn't apply.
+    // The NFPM will use the full amount of the WETH side and 0 of the other.
+    // amountMin = 0 for the unused side, slippage-adjusted for the used side.
+    console.log(`  Mode single-side-eth: only WETH side will be used`);
+
+    // Determine which token is WETH (the one with non-zero balance)
+    const wethIsToken0 = token0.toLowerCase() === WETH.toLowerCase();
+    if (wethIsToken0) {
+      implied1 = 0n;
+    } else {
+      implied0 = 0n;
+    }
   } else {
-    implied0 = expectedLiquidity * (sqrtPbX96 - sqrtPX96) * Q96 / (sqrtPX96 * sqrtPbX96);
+    // Detailed liquidity debug for in-range mode
+    const sqrtPX96 = BigInt(sqrtPriceX96);
+    const sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, sqrtPX96);
+    const sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, sqrtPX96);
+    const Q96 = 1n << 96n;
+    const L0_debug = amount0Desired * sqrtPX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPX96) * Q96);
+    const L1_debug = amount1Desired * Q96 / (sqrtPX96 - sqrtPaX96);
+    const expectedLiquidity = L0_debug < L1_debug ? L0_debug : L1_debug;
+    // Back-calculate implied amounts from L
+    if (expectedLiquidity === L0_debug) {
+      implied1 = expectedLiquidity * (sqrtPX96 - sqrtPaX96) / Q96;
+    } else {
+      implied0 = expectedLiquidity * (sqrtPbX96 - sqrtPX96) * Q96 / (sqrtPX96 * sqrtPbX96);
+    }
+    // FIX (jangan hilang lagi!): amountMin dari IMPLIED (jumlah nyata dipakai liquidity L),
+    // BUKAN dari amountDesired mentah -- kalau salah satu sisi jadi pembatas, amountMin
+    // dari input penuh selalu > implied amount, bikin mint SELALU revert "Price slippage check".
+    // TERBUKTI dengan tx nyata: mint #125115 sukses SETELAH fix ini diterapkan.
+    console.log(`  sqrtPaX96: ${sqrtPaX96}`);
+    console.log(`  sqrtPbX96: ${sqrtPbX96}`);
+    console.log(`  sqrtPX96:  ${sqrtPX96}`);
+    console.log(`  amount0 (${symbol.split('/')[0]}): ${formatUnits(amount0Desired, decimals0)}`);
+    console.log(`  amount1 (${symbol.split('/')[1]}): ${formatUnits(amount1Desired, decimals1)}`);
+    console.log(`  L0 = amount0·sqrtP·sqrtPb / ((sqrtPb-sqrtP)·Q96) = ${L0_debug}`);
+    console.log(`  L1 = amount1·Q96 / (sqrtP-sqrtPa) = ${L1_debug}`);
+    console.log(`  L = min(L0, L1) = ${expectedLiquidity}  (${expectedLiquidity === L0_debug ? 'L0-constrained' : 'L1-constrained'})`);
+    console.log(`  Implied amount0 used: ${formatUnits(implied0, decimals0)}`);
+    console.log(`  Implied amount1 used: ${formatUnits(implied1, decimals1)}`);
   }
-  // FIX (jangan hilang lagi!): amountMin dari IMPLIED (jumlah nyata dipakai liquidity L),
-  // BUKAN dari amountDesired mentah -- kalau salah satu sisi jadi pembatas, amountMin
-  // dari input penuh selalu > implied amount, bikin mint SELALU revert "Price slippage check".
-  // TERBUKTI dengan tx nyata: mint #125115 sukses SETELAH fix ini diterapkan.
+
   const amount0Min = implied0 - (implied0 * slippagePct) / 100n;
   const amount1Min = implied1 - (implied1 * slippagePct) / 100n;
-  console.log(`  sqrtPaX96: ${sqrtPaX96}`);
-  console.log(`  sqrtPbX96: ${sqrtPbX96}`);
-  console.log(`  sqrtPX96:  ${sqrtPX96}`);
-  console.log(`  amount0 (${symbol.split('/')[0]}): ${formatUnits(amount0Desired, decimals0)}`);
-  console.log(`  amount1 (${symbol.split('/')[1]}): ${formatUnits(amount1Desired, decimals1)}`);
-  console.log(`  L0 = amount0·sqrtP·sqrtPb / ((sqrtPb-sqrtP)·Q96) = ${L0_debug}`);
-  console.log(`  L1 = amount1·Q96 / (sqrtP-sqrtPa) = ${L1_debug}`);
-  console.log(`  L = min(L0, L1) = ${expectedLiquidity}  (${expectedLiquidity === L0_debug ? 'L0-constrained' : 'L1-constrained'})`);
-  console.log(`  Implied amount0 used: ${formatUnits(implied0, decimals0)}`);
-  console.log(`  Implied amount1 used: ${formatUnits(implied1, decimals1)}`);
 
   if (!wallet) {
     console.log('  DRY-RUN: no wallet, skipping mint.');
-    return { token0, token1, fee, tickLower, tickUpper, amount0Desired, amount1Desired, expectedLiquidity };
+    return { token0, token1, fee, tickLower, tickUpper, amount0Desired: bal0, amount1Desired: bal1 };
   }
 
   const nfpm = new Contract(V3.nfpm, V3_NFPM_ABI, wallet);
@@ -336,7 +388,19 @@ export async function depositV4(provider, wallet, config, poolInfo = null) {
   const sqrtPriceX96 = BigInt(sqrtPriceX96BN);
   const currentTick = Number(currentTickBN);
   const tickSpacing = poolKey.tickSpacing;
-  const { tickLower, tickUpper } = computeTickRange(currentTick, config.rangeSymmetricPct, tickSpacing);
+  const depositMode = config?.depositMode || 'in-range';
+  let tickLower, tickUpper;
+  if (depositMode === 'single-side-eth') {
+    const wethLabel = token0.toLowerCase() === WETH.toLowerCase() ? symbol.split('/')[0] : symbol.split('/')[1];
+    const r = computeSingleSideWethRange(currentTick, config.rangeSymmetricPct, tickSpacing, token0, token1, WETH);
+    tickLower = r.tickLower;
+    tickUpper = r.tickUpper;
+    console.log(`  DEPOSIT MODE: single-side-eth (100% ${wethLabel} until price enters range)`);
+  } else {
+    const r = computeTickRange(currentTick, config.rangeSymmetricPct, tickSpacing);
+    tickLower = r.tickLower;
+    tickUpper = r.tickUpper;
+  }
 
   const t0 = new Contract(token0, ERC20_ABI, provider);
   const t1 = new Contract(token1, ERC20_ABI, provider);

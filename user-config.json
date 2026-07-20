@@ -77,6 +77,7 @@
     "lpAmountEthCashcat": 0.006,
     "lpAmountEthWeth": 0.005,
     "lpAmountEthUsdg": 0.005,
+    "depositMode": "in-range",
     "rangeSymmetricPct": 15,
     "rangeDownPct": 20,
     "slippagePct": 1,

@@ -496,7 +496,7 @@ async function swapWithFeeDiscovery(router, quoter, tokenIn, tokenOut, amountIn,
 
 // poolInfo: { dex, token0, token1, fee, tickSpacing, decimals0, decimals1, poolAddr }
 // Returns: { token0Bal, token1Bal } or null
-export async function genericSwap(poolInfo, amountEth, provider, wallet) {
+export async function genericSwap(poolInfo, amountEth, provider, wallet, config = null) {
   const sym0 = poolInfo.decimals0 === 6 ? 'USDG' : '';
 
   if (!wallet) {
@@ -508,6 +508,17 @@ export async function genericSwap(poolInfo, amountEth, provider, wallet) {
       console.log(`  fee=${poolInfo.fee}  tickSpacing=${poolInfo.tickSpacing}`);
     }
     return null;
+  }
+
+  const depositMode = config?.depositMode || 'in-range';
+
+  // Single-side-eth: just wrap all ETH → WETH, no swap to token
+  if (depositMode === 'single-side-eth') {
+    console.log(`\n=== genericSwap (single-side-eth) — ${poolInfo.poolAddr.slice(0, 14)} ===`);
+    console.log(`  Wrapping all ${formatEther(amountEth)} ETH → WETH (no swap to target token)`);
+    const weth = new Contract(WETH_ADDR, WETH_ABI, wallet);
+    await wrapEth(wallet, weth, amountEth);
+    return { token0Bal: 0n, token1Bal: 0n };
   }
 
   console.log(`\n=== genericSwap — ${poolInfo.poolAddr.slice(0, 14)} ===`);
@@ -639,8 +650,9 @@ export async function autoOpenExecute(po, provider) {
 
   // Step 1: Swap
   const amountEth = parseEther('0.01'); // 0.005 ETH per side = 0.01 total
-  console.log(`\n--- Step 1: Swap ${formatEther(amountEth)} ETH → tokens ---`);
-  const swapResult = await genericSwap(poolInfo, amountEth, provider, wallet);
+  const config = UC('lp');
+  console.log(`\n--- Step 1: Swap ${formatEther(amountEth)} ETH → tokens${config.depositMode === 'single-side-eth' ? ' (single-side-eth: wrapping only)' : ''} ---`);
+  const swapResult = await genericSwap(poolInfo, amountEth, provider, wallet, config);
   if (!swapResult) {
     const reason = poolInfo.dex === 'V4' ? 'V4 — token acquisition needs V3 WETH route' : 'no working fee tier';
     const errMsg = `Swap failed (${reason})`;
@@ -650,8 +662,7 @@ export async function autoOpenExecute(po, provider) {
   }
 
   // Step 2: Deposit
-  console.log(`\n--- Step 2: Create LP position ---`);
-  const config = UC('lp');
+  console.log(`\n--- Step 2: Create LP position (${config.depositMode}) ---`);
   const position = await genericDeposit(poolInfo, amountEth, provider, wallet, config);
   if (!position) {
     const errMsg = 'Deposit failed';
