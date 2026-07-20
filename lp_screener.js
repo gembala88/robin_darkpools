@@ -1019,8 +1019,9 @@ async function evaluatePools() {
     const hhiInvalid = pools.filter(p => p.hhiChecked && p.hhiData?.hhi === undefined).length;
     const byReason = {};
     for (const p of pools) {
-      if (p.hhiChecked && p.hhiData?.hhi === undefined && p.hhiInvalidReason) {
-        byReason[p.hhiInvalidReason] = (byReason[p.hhiInvalidReason] || 0) + 1;
+      if (p.hhiChecked && p.hhiData?.hhi === undefined) {
+        const reason = p.hhiInvalidReason || 'pre-existing (sebelum fitur reason)';
+        byReason[reason] = (byReason[reason] || 0) + 1;
       }
     }
     if (totalHhiChecked > 0) {

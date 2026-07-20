@@ -255,8 +255,45 @@ function checkGovernance(uniqueToken) {
 //        sedang tetap boleh lolos
 //   2. HHI done and < 9500
 //   3. GMGN done and clean
+// ===== SWAP ROUTE VALIDATION GATE =====
+// Checks whether both tokens in the pair have a direct V3 pool with WETH
+// at any fee tier. If not, the pair cannot be acquired via swap → block auto-open.
+async function checkSwapRoutes(po) {
+  const b = po.baseToken?.address;
+  const q = po.quoteToken?.address;
+  if (!b || !q) return true; // can't check — assume OK
+  const bl = b.toLowerCase();
+  const ql = q.toLowerCase();
+  const weth = WETH_ADDR.toLowerCase();
+  if (bl === weth && ql === weth) return false; // both WETH — invalid pair
+
+  let provider;
+  try { provider = await makeProvider('LP_EXEC_RPC_URL'); } catch { return true; }
+  const factory = new Contract(V3.factory, ['function getPool(address,address,uint24) view returns (address)'], provider);
+  const TIERS = [10000, 3000, 500, 100];
+
+  for (const token of [b, q]) {
+    const tl = token.toLowerCase();
+    if (tl === weth) continue;
+    let found = false;
+    for (const fee of TIERS) {
+      try {
+        const addr = await factory.getPool(token, WETH_ADDR, fee);
+        if (addr && addr !== '0x0000000000000000000000000000000000000000') { found = true; break; }
+      } catch {}
+    }
+    if (!found) {
+      const sym = tl === bl ? (po.baseToken?.symbol || tl.slice(0, 10)) : (po.quoteToken?.symbol || tl.slice(0, 10));
+      console.log(`  SWAP-ROUTE GATE: ${sym} has no direct V3 WETH pool — cannot swap`);
+      return false;
+    }
+  }
+  return true;
+}
+
 //   4. TVL >= $100k
 //   5. Governance
+//   6. Swap routes: both tokens must have V3 WETH pool
 export async function checkAutoOpenConditions(po) {
   // Gate 0: Pause flag (set via Telegram /pause)
   const pauseFile = path.join(process.cwd(), 'auto_open_paused.flag');
@@ -282,6 +319,10 @@ export async function checkAutoOpenConditions(po) {
   const uniqueToken = po.baseToken?.address;
   const gov = checkGovernance(uniqueToken);
   if (!gov.pass) return { pass: false, reason: `governance: ${gov.reason}` };
+
+  // Gate 6: Swap route — both tokens must have a direct V3 WETH pool
+  const routeOk = await checkSwapRoutes(po);
+  if (!routeOk) return { pass: false, reason: 'swap route: token has no V3 WETH pool' };
 
   return { pass: true };
 }
@@ -411,17 +452,12 @@ export async function genericSwap(poolInfo, amountEth, provider, wallet) {
 
   console.log(`\n=== genericSwap — ${poolInfo.poolAddr.slice(0, 14)} ===`);
 
-  if (poolInfo.dex !== 'V3') {
-    console.log(`  SKIP: only V3 swaps supported in Phase 2`);
-    return null;
-  }
-
   const wethAddr = await getWethAddress(provider);
   const isWeth0 = poolInfo.token0.toLowerCase() === wethAddr.toLowerCase();
   const isWeth1 = poolInfo.token1.toLowerCase() === wethAddr.toLowerCase();
 
   if (!isWeth0 && !isWeth1) {
-    console.log(`  SKIP: neither token is WETH — multi-hop not supported yet`);
+    console.log(`  SKIP: neither token is WETH — multi-hop swap not yet supported (need token→WETH→token pair)`);
     return null;
   }
 
@@ -546,7 +582,8 @@ export async function autoOpenExecute(po, provider) {
   console.log(`\n--- Step 1: Swap ${formatEther(amountEth)} ETH → tokens ---`);
   const swapResult = await genericSwap(poolInfo, amountEth, provider, wallet);
   if (!swapResult) {
-    const errMsg = 'Swap failed (no working fee tier)';
+    const reason = poolInfo.dex === 'V4' ? 'V4 — token acquisition needs V3 WETH route' : 'no working fee tier';
+    const errMsg = `Swap failed (${reason})`;
     console.log(`  ${errMsg}`);
     await tgScreener(`❌ <b>AUTO-OPEN FAILED</b> — ${sym}\n${errMsg}`).catch(() => {});
     return null;
