@@ -291,9 +291,65 @@ async function checkSwapRoutes(po) {
   return true;
 }
 
+// ===== HONEYPOT SELF-TEST GATE =====
+// Simulates buy-then-sell via QuoterV2. If sell quote fails or returns
+// significantly less than expected, the token is flagged as a honeypot.
+// Uses only view calls — no gas cost. Checks ALL non-WETH tokens in pair.
+// Returns true if all checked tokens pass, false if honeypot detected,
+// or true if inconclusive (no V3 pool exists — Gate 6 handles that).
+export async function checkHoneypot(po) {
+  const tokens = [po.baseToken?.address, po.quoteToken?.address].filter(Boolean);
+  if (tokens.length === 0) return true;
+  const weth = WETH_ADDR.toLowerCase();
+  const nonWeth = tokens.filter(t => t.toLowerCase() !== weth);
+  if (nonWeth.length === 0) return true;
+
+  let provider;
+  try { provider = await makeProvider('LP_EXEC_RPC_URL'); } catch { return true; }
+  const quoter = new Contract(V3.quoterV2, V3_QUOTERV2_ABI, provider);
+  const TIERS = [10000, 3000, 500, 100];
+  const BUY_AMOUNT = parseEther('0.001');
+
+  for (const token of nonWeth) {
+    let buyEverWorked = false;
+    let passed = false;
+
+    for (const fee of TIERS) {
+      let tokenAmount;
+      try {
+        const r = await quoter.quoteExactInputSingle.staticCall([WETH_ADDR, token, BUY_AMOUNT, fee, 0]);
+        tokenAmount = r[0];
+      } catch { continue; }
+      if (!tokenAmount || tokenAmount === 0n) continue;
+      buyEverWorked = true;
+
+      try {
+        const r = await quoter.quoteExactInputSingle.staticCall([token, WETH_ADDR, tokenAmount, fee, 0]);
+        const wethBack = r[0];
+        if (wethBack && wethBack >= BUY_AMOUNT / 2n) {
+          console.log(`  HONEYPOT TEST: ${token.slice(0, 10)} passed at fee=${fee}`);
+          passed = true;
+          break;
+        }
+      } catch {} // sell failed — try next fee tier
+    }
+
+    if (!passed) {
+      if (!buyEverWorked) {
+        console.log(`  HONEYPOT TEST: ${token.slice(0, 10)} — no V3 pool found (Gate 6 should catch this)`);
+        continue; // inconclusive — don't flag as honeypot
+      }
+      console.log(`  HONEYPOT TEST: ${token.slice(0, 10)} FAILED — sell simulation failed or returned < 50% at all fee tiers`);
+      return false;
+    }
+  }
+  return true;
+}
+
 //   4. TVL >= $100k
 //   5. Governance
 //   6. Swap routes: both tokens must have V3 WETH pool
+//   7. Honeypot self-test
 export async function checkAutoOpenConditions(po) {
   // Gate 0: Pause flag (set via Telegram /pause)
   const pauseFile = path.join(process.cwd(), 'auto_open_paused.flag');
@@ -323,6 +379,10 @@ export async function checkAutoOpenConditions(po) {
   // Gate 6: Swap route — both tokens must have a direct V3 WETH pool
   const routeOk = await checkSwapRoutes(po);
   if (!routeOk) return { pass: false, reason: 'swap route: token has no V3 WETH pool' };
+
+  // Gate 7: Honeypot self-test (simulate buy-then-sell via QuoterV2)
+  const hpOk = await checkHoneypot(po);
+  if (!hpOk) return { pass: false, reason: `honeypot detected (sell simulation failed/reverted)` };
 
   return { pass: true };
 }
