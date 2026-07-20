@@ -997,7 +997,7 @@ async function evaluatePools() {
 
     // HHI / LP concentration check for candidate pools (once per pool, TVL > $20K)
     // Retry on failure after 5 min cooldown (hhiFailedAt)
-    // NOTE: threshold 15 menyamakan gate score (checkAutoOpenConditions) — sebelumnya
+    // NOTE: threshold 5 menyamakan gate score (checkAutoOpenConditions) — sebelumnya 15,
     // pakai minCandidateScore (35) yang menyebabkan token score 15-34 TIDAK PERNAH
     // dapat HHI dan stuck di 'HHI belum valid (pending)' selamanya.
 
@@ -1014,7 +1014,7 @@ async function evaluatePools() {
         po.hhiRetryAt = Date.now();
       }
     }
-    if (po.score >= 15 && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 20000) {
+    if (po.score >= 5 && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 20000) {
       const cooldownOk = !po.hhiFailedAt || (Date.now() - po.hhiFailedAt) > 300000; // 5 min
       if (!cooldownOk) continue;
       try {
@@ -1050,7 +1050,7 @@ async function evaluatePools() {
     const gateHhi = po.hhiData?.hhi;
     const gateTvl = po.tvlUsd || 0;
     let gateFail = null;
-    if (gateScore < 15) gateFail = `score ${gateScore} < 15`;
+    if (gateScore < 5) gateFail = `score ${gateScore} < 5`;
     else if (gateHhi === undefined) {
       if (po.hhiChecked) gateFail = `HHI checked but invalid (${po.hhiInvalidReason || 'no hhiData'})`;
       else if (po.hhiFailed) gateFail = `HHI belum valid (gagal ${po.hhiFailed}x, cooldown ${Math.ceil(Math.max(0, 5 - (Date.now()-po.hhiFailedAt)/60000))}min)`;

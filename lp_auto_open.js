@@ -359,7 +359,7 @@ export async function checkAutoOpenConditions(po) {
   // Gate 1: Growth trend (replaces score >= 60)
   const trend = computeTrend(po);
   if (trend.direction !== 'up') return { pass: false, reason: `trend ${trend.direction} (${trend.slopePct}%/cycle) — need UP` };
-  if ((po.score || 0) < 15) return { pass: false, reason: `score ${po.score} < 15` };
+  if ((po.score || 0) < 5) return { pass: false, reason: `score ${po.score} < 5` };
 
   // Gate 2: HHI done and < 9500
   if (!po.hhiData || po.hhiData.hhi === undefined) return { pass: false, reason: 'HHI not checked' };
