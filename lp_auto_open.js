@@ -365,12 +365,15 @@ export async function checkAutoOpenConditions(po) {
   if (!po.hhiData || po.hhiData.hhi === undefined) return { pass: false, reason: 'HHI not checked' };
   if (po.hhiData.hhi >= 9500) return { pass: false, reason: `HHI ${po.hhiData.hhi} >= 9500` };
 
+  // Gate 2b: Minimum unique providers (tersedia setelah HHI selesai)
+  if ((po.hhiData.providers || 0) < 10) return { pass: false, reason: `hanya ${po.hhiData.providers || 0} providers, minimal 10` };
+
   // Gate 3: GMGN done and clean
   if (!po.gmgnChecked) return { pass: false, reason: 'GMGN not checked' };
   if (po.gmgnFlags && po.gmgnFlags.length > 0) return { pass: false, reason: `GMGN flagged: ${po.gmgnFlags.join(', ')}` };
 
-  // Gate 4: TVL >= $20k (trend gate is primary filter, not TVL size)
-  if ((po.tvlUsd || 0) < 20000) return { pass: false, reason: `TVL $${(po.tvlUsd || 0).toLocaleString()} < $20k` };
+  // Gate 4: TVL >= $2k (trend gate is primary filter, not TVL size)
+  if ((po.tvlUsd || 0) < 2000) return { pass: false, reason: `TVL $${(po.tvlUsd || 0).toLocaleString()} < $2k` };
 
   // Gate 5: Governance
   const uniqueToken = po.baseToken?.address;

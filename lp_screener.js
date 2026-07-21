@@ -995,7 +995,7 @@ async function evaluatePools() {
       await checkPoolGMGN(po);
     }
 
-    // HHI / LP concentration check for candidate pools (once per pool, TVL > $20K)
+    // HHI / LP concentration check for candidate pools (once per pool, TVL > $2K)
     // Retry on failure after 5 min cooldown (hhiFailedAt)
     // NOTE: threshold 5 menyamakan gate score (checkAutoOpenConditions) — sebelumnya 15,
     // pakai minCandidateScore (35) yang menyebabkan token score 15-34 TIDAK PERNAH
@@ -1014,7 +1014,7 @@ async function evaluatePools() {
         po.hhiRetryAt = Date.now();
       }
     }
-    if (po.score >= 5 && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 20000) {
+    if (po.score >= 5 && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 2000) {
       const cooldownOk = !po.hhiFailedAt || (Date.now() - po.hhiFailedAt) > 300000; // 5 min
       if (!cooldownOk) continue;
       try {
@@ -1043,11 +1043,12 @@ async function evaluatePools() {
     }
 
     // Auto-open (Phase 2):
-    // Gates: trend UP, score >= 15, HHI < 9500, GMGN clean, TVL >= $20k, governance OK
+    // Gates: trend UP, score >= 5, HHI < 9500, providers >= 10, GMGN clean, TVL >= $2k, governance OK
     // Exec provider: LP_EXEC_RPC_URL (terpisah dari LP_SCREENER_RPC_URL untuk discovery)
     const sym = po.baseToken?.symbol || '?';
     const gateScore = po.score || 0;
     const gateHhi = po.hhiData?.hhi;
+    const gateProviders = po.hhiData?.providers || 0;
     const gateTvl = po.tvlUsd || 0;
     let gateFail = null;
     if (gateScore < 5) gateFail = `score ${gateScore} < 5`;
@@ -1057,9 +1058,10 @@ async function evaluatePools() {
       else gateFail = `HHI belum valid (pending)`;
     }
     else if (gateHhi >= 9500) gateFail = `HHI ${gateHhi} >= 9500`;
+    else if (gateProviders < 10) gateFail = `${sym}: hanya ${gateProviders} providers, minimal 10`;
     else if (!po.gmgnChecked) gateFail = 'GMGN belum dicek';
     else if (po.gmgnFlags && po.gmgnFlags.length > 0) gateFail = `GMGN flagged: ${po.gmgnFlags.join(',')}`;
-    else if (gateTvl < 20000) gateFail = `TVL $${gateTvl.toLocaleString()} < $20k`;
+    else if (gateTvl < 2000) gateFail = `TVL $${gateTvl.toLocaleString()} < $2k`;
     // Gate 0.5: Per-token cooldown — jika token yang SAMA sudah auto-open
     // 2x berturut-turut, jeda 3 jam sebelum boleh auto-open lagi.
     // Dipaksa coba token lain, bukan approve token yang sama terus-menerus.
