@@ -1,140 +1,145 @@
-# 🤖 RobinArb
+# 🤖 RobinArb — Autonomous LP & Arbitrage System for Robinhood Chain
 
-> 🇮🇩 Versi Bahasa Indonesia: **[README.id.md](README.id.md)**
+> **While most LP managers on Robinhood Chain check their positions by hand, this one doesn't sleep.**
 
-**Atomic arbitrage bot for Robinhood Chain** (chainId `4663`) — trades the gap between
-a token's **RobinFun bonding curve** and its **Uniswap V4 pool**, in a single
-**profit‑or‑revert** transaction.
+A fully autonomous liquidity-provision and arbitrage system for **Robinhood Chain** (chainId `4663`) — discovers pools, scores candidates, opens positions, and closes them again, with zero manual clicking.
 
-| Dir | Route | Fires when |
-|:--:|---|---|
-| 🅐 | 🟢 buy **curve** → 🔴 sell **V4** | V4 pumped **above** the curve |
-| 🅑 | 🟢 buy **V4** → 🔴 sell **curve** | V4 dumped **below** the curve |
-
-⚙️ Auto‑discovers every token with an active curve **and** a liquid V4 pool, watches
-them event‑driven, sizes each trade optimally, and only fires when the net edge
-(after the 1% curve fee, the V4 pool fee, slippage & gas) clears the gate.
+[![Chain](https://img.shields.io/badge/chain-Robinhood%20(4663)-green)]()
+[![Automation](https://img.shields.io/badge/mode-fully%20autonomous-blue)]()
+[![Safety](https://img.shields.io/badge/pre--flight-simulated-orange)]()
 
 ---
 
-## 📖 How it works — operator playbook
+## 🧠 Why this is different
 
-> 🎯 **You create the arbitrage venue; the bot captures it automatically.**
+Most LP bots on new chains are **manual dashboards** — you still have to spot a pool, decide, click, and watch it yourself. This system replaces every one of those steps:
 
-### 1️⃣ Find a curve token
-Browse **[robinfun.live](https://robinfun.live)** → pick one with **≥ 10% bonding
-progress** (enough curve depth to trade against).
-
-### 2️⃣ Create its Uniswap V4 pool
-Add a pool for that token with a **25% base fee**, and set the **initial price = the
-token's current bonding‑curve price** — so the pool starts aligned (no free loss).
-
-### 3️⃣ Trigger / seed the pool
-Copy the token's **contract address** → paste into
-**[trigerpool.vercel.app](https://trigerpool.vercel.app)** → connect wallet → leave
-settings on **default** → click **Swap**. This initializes the pool + emits its first
-on‑chain Swap.
-
-### 4️⃣ Bot takes over — zero manual input
-RobinArb's real‑time listener watches the V4 PoolManager `Initialize` event. The
-moment your pool is created it's **added to the watchlist automatically** (persisted,
-plus the 6‑hourly `npm run scan` backstop) — you **never edit the bot to add a token**.
-From there it quotes both directions and fires atomic whenever the pool diverges from
-the curve past the fees.
-
-> ⚡ **TL;DR** — pick a ≥10% bonded token → make its 25% V4 pool at the curve price →
-> trigger once → the bot detects it live and arbs it. 💰
+| Manual LP management | This system |
+|---|---|
+| You scan DexScreener yourself | Auto-discovers pools from **on-chain events** (V3 factory + V4 `Initialize`), not just keyword search — tracks 1000+ pool candidates |
+| You eyeball "is this safe?" | Multi-gate scoring: TVL, momentum trend, **LP concentration (HHI)**, GMGN security check |
+| You hope it's not a honeypot | **Self-tests every candidate** — simulates a buy→sell round-trip via on-chain quoter *before* ever opening a position |
+| You watch the chart for exits | Auto-closes on **stop-loss** (impermanent-loss threshold) **or trailing take-profit** (arms at a gain %, locks in on pullback) |
+| You risk wasted gas on failed txs | Every state-changing transaction is **simulated first** (`eth_call`) — a doomed tx never gets broadcast |
+| You manage one position at a time | Governance layer: max concurrent positions, per-token cooldown, dedup by underlying asset |
 
 ---
 
-## ⚛️ How it trades (atomic)
+## 🏗️ Architecture
 
-`contracts/ArbExecutor.sol` holds the working capital and does buy+sell in **one tx**
-that **reverts unless the contract's ETH balance grows by `minProfit`** — a closed
-window costs only gas, never an inventory loss. The owner wallet only pays gas.
+┌─────────────────┐ ┌──────────────────┐ ┌─────────────────┐
+│ lp_screener.js │────▶│ lp_auto_open.js │────▶│ lp_deposit.js │
+│ discover+score │ │ gate checks │ │ mint position │
+└─────────────────┘ └──────────────────┘ └─────────────────┘
+│
+┌─────────────────┐ ┌──────────────────┐ ▼
+│ telegram_bot.js │◀────│ lp_monitor.js │◀─────── (position live)
+│ /status /pause │ │ IL + TP watch │
+└─────────────────┘ └──────────────────┘
+│
+▼
+lp_withdraw.js
+(auto-close, simulated pre-flight)
 
-- 🅐 `curveToV4(token, ethIn, minTokensOut, key, minEthOut, minProfit)` — dir A
-- 🅑 `v4ToCurve(token, ethIn, minTokensOut, key, minEthOut, minProfit)` — dir B
-- 🛠️ `forceCurveToV4` / `forceV4ToCurve` — owner‑only manual override (no profit guard, testing)
-- 🔑 `withdraw` / `rescueToken` / `setOwner` — owner only
+A separate **atomic arbitrage engine** (`arb.js`) also runs in parallel, trading the spread between a token's bonding curve and its live Uniswap V4 pool — profit-or-revert in a single transaction, so a missed window costs only gas, never inventory.
 
-## Setup
+---
+
+## 🚪 The gate a candidate must clear before a real position opens
+
+1. **Trend** — pool value must be genuinely *rising*, not just big
+2. **Score ≥ threshold** — composite of TVL, volume, swap count, age, price stability
+3. **HHI concentration** — rejects pools dominated by a single whale wallet
+4. **GMGN security check** — flags known-risky contracts
+5. **Honeypot self-test** — quotes a buy then a sell; if the sell reverts or returns <50%, blocked
+6. **Swap-route check** — token must have a real path to/from ETH
+7. **Governance** — position limit, per-token cooldown, no duplicate underlying assets
+
+Only after *all seven* pass does real capital move — and even then, the mint transaction is simulated once more immediately before broadcast.
+
+---
+
+## 🚀 Quick Start
 
 ```bash
+git clone https://github.com/gembala88/robin_darkpools.git
+cd robin_darkpools
 npm install
-cp .env.example .env      # fill PRIVATE_KEY, EXEC_RPC_URL, Telegram; leave EXECUTOR_ADDR blank for now
+cp .env.example .env
 ```
 
-RPC (optional): works out of the box on the **public Robinhood RPC** (already set in
-`.env.example`), with a **built-in DNS-block bypass** (Cloudflare IP pin + DoH) for
-ISPs that block `*.robinhood.com` — no VPN. For more reliable execution you can
-**optionally** point `EXEC_RPC_URL` at a private Alchemy endpoint — get one free at
-**https://dashboard.alchemy.com** (create an app for Robinhood Chain).
+Fill in `.env`:
+```env
+PRIVATE_KEY=0x...              # wallet that holds trading capital
+LP_RPC_URL=...                 # any Robinhood Chain RPC (public one works, private is faster)
+TELEGRAM_BOT_TOKEN=...         # optional but recommended — get one from @BotFather
+TELEGRAM_CHAT_ID=...
+```
 
-## Deploy + fund the contract
+Configure risk parameters in `user-config.json`:
+```json
+{
+  "lp": {
+    "ilExitThresholdPct": 10,      // stop-loss trigger
+    "depositMode": "in-range",     // or "single-side-eth" for a defensive entry
+    "maxPositions": 3
+  }
+}
+```
 
+Run the pieces (each is a long-running process — use `pm2` for 24/7):
 ```bash
-npm run build:contract                 # compile -> build/ArbExecutor.json
-npm run deploy                         # deploy ArbExecutor, prints the address
-# put the printed address in .env as EXECUTOR_ADDR, then:
-AMOUNT_ETH=0.006 npm run deposit        # fund working capital (>= MAX_SIZE_ETH)
+node lp_screener.js      # discovery + scoring + auto-open (the brain)
+node lp_monitor.js       # watches open positions, auto-closes
+node telegram_bot.js     # /status /positions /pause /resume from your phone
 ```
 
-## Withdraw
-
+Or all at once with pm2:
 ```bash
-npm run withdraw                       # withdraw everything to the owner wallet
-LEAVE_ETH=0.006 npm run withdraw        # withdraw all but 0.006 (keep trading capital)
-AMOUNT_ETH=0.01 npm run withdraw        # withdraw an exact amount
+pm2 start lp_screener.js lp_monitor.js telegram_bot.js
+pm2 save && pm2 startup
 ```
 
-## Run
+### Telegram commands
+| Command | What it does |
+|---|---|
+| `/status` | Auto-open state, position count, wallet balance |
+| `/positions` | List active positions with tick range |
+| `/pause` | Freeze new position opens (existing ones still monitored) |
+| `/resume` | Re-enable |
 
-```bash
-npm run scan            # discover arbitrable tokens -> watchlist.json
-npm run monitor        # dry-run: watch spreads, no trading
-LIVE=1 npm run live     # live atomic trading (needs funded contract + EXECUTOR_ADDR)
-npm run snapshot       # one-off econ snapshot across the watchlist
-```
+---
 
-24/7 with pm2:
+## ⚠️ Honest notes
 
-```bash
-pm2 start ecosystem.config.cjs && pm2 save && pm2 startup
-pm2 logs robinarb
-# refresh the watchlist periodically (cron): npm run scan && pm2 restart robinarb
-```
+- This is **experimental software** running on a very young chain — expect edge cases.
+- Every gate above *reduces* risk; none of them *eliminate* it. Impermanent loss and rug pulls are real possibilities on any AMM.
+- Position sizes default small (0.01 ETH) on purpose — this is a discovery/research tool first, not a guaranteed-yield machine.
+- Read `lp_auto_open.js` and `lp_monitor.js` before pointing real capital at it. Understand what you're running.
 
-## Files
+---
+
+## 📂 Key files
 
 | File | Purpose |
 |---|---|
-| `arb.js` | main bot: discover, quote both directions, optimal size, fire atomic |
-| `scanner.js` | on-chain discovery of curve+V4 tokens -> watchlist.json |
-| `snapshot.js` | econ snapshot across the watchlist |
-| `discover.mjs` | verify curve state / PoolKey / V4 liquidity on-chain |
-| `provider.js` | ethers provider with DNS-block bypass + concurrency/backoff |
-| `config.js` | verified on-chain addresses (factory, V4 infra, PoolKeys) |
-| `abis.js` | curve ABI + Universal Router V4 swap encoder |
-| `telegram.js` | real-time trade notifications |
-| `contracts/ArbExecutor.sol` | atomic profit-or-revert executor |
-| `deploy.js` / `deposit.js` / `withdraw.js` | contract lifecycle |
-| `forcetest.js` / `atomictest.js` | executor validation (owner-only force calls) |
+| `lp_screener.js` | Pool discovery (DexScreener + on-chain V3/V4 registry), scoring, auto-open orchestration |
+| `lp_auto_open.js` | The 7-gate check + generic swap/deposit execution for any token pair |
+| `lp_monitor.js` | Position watch loop — IL stop-loss, trailing take-profit, periodic Telegram reports |
+| `lp_deposit.js` / `lp_withdraw.js` | Low-level mint/withdraw with pre-flight transaction simulation |
+| `arb.js` | Standalone atomic curve↔V4 arbitrage bot |
+| `telegram_bot.js` | Remote control via Telegram commands |
+| `v4_pool_scanner.js` | Incremental on-chain scanner building a full V4 pool registry |
 
-## Config knobs (.env)
+---
 
-| var | meaning |
-|---|---|
-| `LIVE` | `1` = trade, `0` = monitor |
-| `MIN_SIZE_ETH` / `MAX_SIZE_ETH` | trade size bounds |
-| `MIN_PROFIT_BPS` | required net edge after fees + gas |
-| `GRID_POINTS` | probe sizes per direction |
-| `POLL_MS` / `EVENT_POLL_MS` | fallback poll / Swap-event cadence |
-| `EXEC_RPC_URL` | private execution RPC (Alchemy) |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | notifications |
+## 🛡️ Safety
 
-## Safety
+- `.env` is gitignored — never commit it.
+- Arb execution is atomic (profit-or-revert) — a missed window costs only gas.
+- Every LP mint/withdraw/swap is simulated (`eth_call`) before broadcast.
+- Governance caps concurrent exposure and prevents duplicate-token stacking.
 
-- `.env` (private key + private RPC) is gitignored — never commit it.
-- Atomic execution can't lose on a trade: it reverts unless profitable.
-- Working capital lives in the contract; withdraw anytime (owner only).
+---
+
+🇮🇩 Versi Bahasa Indonesia: **[README.id.md](README.id.md)**
