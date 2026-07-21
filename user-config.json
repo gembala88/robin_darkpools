@@ -158,6 +158,10 @@
     "pumpGuardMaxVolTvlRatio": 15,
     "pumpGuardMaxPriceChangePct": 500,
 
+    "--- LP FAST-TRACK ---": "New pool watcher (bypasses backlog, checks recent blocks every N ms)",
+    "fastTrackEnabled": true,
+    "fastTrackIntervalMs": 120000,
+
     "--- LP MISC ---": "Other timing parameters",
     "hhiRetryCooldownHours": 6
   },

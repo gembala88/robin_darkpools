@@ -869,6 +869,94 @@ async function _computeV4HHIImpl(poolId, poolState) {
   return penalty;
 }
 
+// ===== FAST-TRACK: New Pool Watcher (V3 + V4) =====
+// Scans recent blocks (configurable interval, default 120s) for newly created
+// V3/V4 pools. Skips backlog — only checks lastCheckedBlock → head.
+// New pools flagged _fastTrack for prioritized evaluation.
+const FAST_TRACK_INTERVAL = () => cfgLp('fastTrackIntervalMs') || 120_000;
+async function fastTrackPoolMonitoring() {
+  if (!state.fastTrack) state.fastTrack = { lastBlock: 0 };
+  const provider = await makeProvider('LP_SCREENER_RPC_URL');
+  const head = await provider.getBlockNumber();
+  const fromBlock = state.fastTrack.lastBlock || head;
+  if (head <= fromBlock) return;
+
+  const toBlock = head;
+  const weth = KNOWN_STABLES;
+  const fastTrackAddrs = new Set();
+
+  // V3 PoolCreated
+  try {
+    const v3Logs = await Promise.race([
+      provider.getLogs({ address: V3_FACTORY, topics: [V3_POOL_CREATED], fromBlock, toBlock }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
+    ]);
+    for (const lg of v3Logs) {
+      const t0 = '0x' + lg.topics[1].slice(26).toLowerCase();
+      const t1 = '0x' + lg.topics[2].slice(26).toLowerCase();
+      if (!weth.has(t0) && !weth.has(t1)) continue;
+      const poolAddr = '0x' + lg.data.slice(-40).toLowerCase();
+      if (!state.pools[poolAddr]) fastTrackAddrs.add(poolAddr);
+    }
+  } catch { /* timeout/error — skip this cycle */ }
+
+  // V4 Initialize
+  try {
+    const v4Logs = await Promise.race([
+      provider.getLogs({ address: V4_POOLMANAGER, topics: [V4_INITIALIZE], fromBlock, toBlock }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
+    ]);
+    for (const lg of v4Logs) {
+      const c0 = '0x' + lg.topics[2].slice(26).toLowerCase();
+      const c1 = '0x' + lg.topics[3].slice(26).toLowerCase();
+      if (!weth.has(c0) && !weth.has(c1)) continue;
+      const pairAddr = '0x' + lg.topics[1].slice(2, 42).toLowerCase();
+      if (!state.pools[pairAddr]) fastTrackAddrs.add(pairAddr);
+    }
+  } catch { /* timeout/error */ }
+
+  state.fastTrack.lastBlock = head;
+
+  if (fastTrackAddrs.size === 0) return;
+
+  // Immediately fetch DexScreener for all detected pools
+  const pairs = await fetchBatchPools([...fastTrackAddrs]);
+  const minTvl   = cfgLp('tvlUsdGateMin') || 2000;
+  const maxTvl   = cfgLp('tvlUsdGateMax') || 70000;
+  let newCount = 0;
+
+  for (const p of pairs) {
+    const key = lc(p.pairAddress);
+    if (state.pools[key]) continue;
+    const po = poolFromDSPair(p);
+    const tvl = po.tvlUsd || 0;
+
+    // Basic viability filter
+    if (tvl < minTvl || tvl > maxTvl) {
+      console.log(`  [fastTrack] SKIP ${po.baseToken?.symbol || '?'}/${po.quoteToken?.symbol || '?'}: TVL $${tvl.toLocaleString()} outside range`);
+      continue;
+    }
+    const vol = po.volume24h || 0;
+    const swaps = po.swaps24h || 0;
+    if (vol === 0 || swaps < (cfgLp('deadTokenMinSwaps24h') || 5)) {
+      console.log(`  [fastTrack] SKIP ${po.baseToken?.symbol || '?'}/${po.quoteToken?.symbol || '?'}: dead (vol=${vol} swaps=${swaps})`);
+      continue;
+    }
+
+    po._fastTrack = true;
+    state.pools[key] = po;
+    newCount++;
+    console.log(`  [fastTrack] NEW POOL: ${po.baseToken?.symbol || '?'}/${po.quoteToken?.symbol || '?'} TVL=$${tvl.toLocaleString()} vol=$${vol.toLocaleString()}`);
+    await tgScreener(
+      `🆕 <b>Pool BARU terdeteksi</b> — ${po.baseToken?.symbol || '?'}/${po.quoteToken?.symbol || '?'}\n` +
+      `TVL: $${tvl.toLocaleString()} | Vol 24h: $${vol.toLocaleString()}\n` +
+      `Evaluasi diprioritaskan (fast-track).`
+    ).catch(() => {});
+  }
+
+  if (newCount > 0) saveState();
+}
+
 // ===== FILTERS =====
 function passesFilters(po) {
   const minTvl   = cfgSc('minTvlUsd')   || 5000;
@@ -1250,6 +1338,16 @@ async function main() {
   const init = await evaluatePools();
   console.log(`Initial: ${init.passed} passed filters, ${init.notified} new candidates`);
 
+  // --- Fast-track startup: catch pools created while bot was offline ---
+  if (cfgLp('fastTrackEnabled') !== false) {
+    try {
+      console.log('\n--- Fast-track: catching up on pools created while offline ---');
+      await fastTrackPoolMonitoring();
+    } catch (e) {
+      console.error(`[fastTrack] startup error: ${e.shortMessage || e.message}`);
+    }
+  }
+
   await tgScreener(
     `🔍 <b>LP Screener online</b> — tracking ${Object.keys(state.pools).length} pools, polling every ${(pollMs / 60000).toFixed(0)}min`
   );
@@ -1259,6 +1357,7 @@ async function main() {
   let lastSummaryRun = Date.now();
   let lastV4ScanRun = 0;
   let lastV3ScanRun = 0;
+  let lastFastTrackRun = 0;
 
   const interval = setInterval(async () => {
     try {
@@ -1307,6 +1406,18 @@ async function main() {
           console.error(`[v3Scan] error: ${e.shortMessage || e.message}`);
         }
         lastV3ScanRun = now;
+      }
+
+      // Fast-track: new pool watcher (every ~2 min, scans recent blocks only)
+      const ftEnabled = cfgLp('fastTrackEnabled') !== false;
+      const ftInterval = FAST_TRACK_INTERVAL();
+      if (ftEnabled && now - lastFastTrackRun > ftInterval) {
+        try {
+          await fastTrackPoolMonitoring();
+        } catch (e) {
+          console.error(`[fastTrack] error: ${e.shortMessage || e.message}`);
+        }
+        lastFastTrackRun = now;
       }
     } catch (err) {
       const msg = err.shortMessage || err.message;
