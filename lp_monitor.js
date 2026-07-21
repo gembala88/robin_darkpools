@@ -189,6 +189,22 @@ async function resolveV3PoolAnyFee(token0, token1, provider) {
   return null;
 }
 
+// Get real-time uncollected fees via staticCall collect() — tokensOwed from
+// positions() is stale until a transaction touches the position. This view-only
+// call returns actual accrued fees without sending any transaction.
+async function getRealTimeFeesV3(provider, tokenId) {
+  try {
+    const nfpm = new Contract(V3.nfpm, V3_NFPM_ABI, provider);
+    const r = await nfpm.collect.staticCall({
+      tokenId,
+      recipient: '0x0000000000000000000000000000000000000001',
+      amount0Max: (1n << 128n) - 1n,
+      amount1Max: (1n << 128n) - 1n,
+    });
+    return { amount0: BigInt(r[0]), amount1: BigInt(r[1]) };
+  } catch { return { amount0: 0n, amount1: 0n }; }
+}
+
 // Compute current USD value of a position from its live amounts.
 async function computePositionUsdValue(provider, liquidity, sqrtPriceX96, tickLower, tickUpper, currentTick, tokensOwed0, tokensOwed1, token0, token1) {
   const prices = await getTokenUsdPrices(token0, token1, currentTick, sqrtPriceX96, provider);
@@ -252,8 +268,13 @@ async function checkV3(provider, entry, config) {
   const entryTick = Number(entry.entryTick ?? currentTick);
   const entryPrice = tickToPrice(entryTick);
 
+  // Get real-time fees via staticCall (positions().tokensOwed is stale)
+  const realFees = await getRealTimeFeesV3(provider, tokenId);
+  const fee0 = realFees.amount0;
+  const fee1 = realFees.amount1;
+
   const ilPct = ilConcentrated(entryPrice, price, Number(pos.tickLower), Number(pos.tickUpper)) * 100;
-  const feeValueEth = Number(formatEther(pos.tokensOwed1)) + Number(formatUnits(pos.tokensOwed0, 18)) * price;
+  const feeValueEth = Number(formatEther(fee1)) + Number(formatUnits(fee0, 18)) * price;
   const outOfRange = currentTick < Number(pos.tickLower) || currentTick > Number(pos.tickUpper);
   const threshold = Number(config.ilExitThresholdPct);
   const ilExceedsThreshold = ilPct < -threshold;
@@ -270,7 +291,7 @@ async function checkV3(provider, entry, config) {
     currentValueUsd = await computePositionUsdValue(
       provider, pos.liquidity, sqrtPriceX96,
       Number(pos.tickLower), Number(pos.tickUpper), currentTick,
-      pos.tokensOwed0, pos.tokensOwed1,
+      fee0, fee1,
       entry.token0 || pos.token0, entry.token1 || pos.token1
     );
     if (currentValueUsd !== null && currentValueUsd > 0) {
@@ -697,6 +718,11 @@ async function _reportV3(provider, entry) {
   const pos = await getV3Position(provider, tokenId);
   if (!pos || pos.liquidity === 0n) return;
 
+  // Get real-time fees via staticCall (positions().tokensOwed is stale)
+  const realFees = await getRealTimeFeesV3(provider, tokenId);
+  const fee0 = realFees.amount0;
+  const fee1 = realFees.amount1;
+
   let poolAddr;
   if (entry.token0 && entry.token1 && entry.fee != null) {
     try { poolAddr = await getV3PoolAddress(provider, entry.token0, entry.token1, entry.fee); } catch { return; }
@@ -733,7 +759,7 @@ async function _reportV3(provider, entry) {
     const currentV = await computePositionUsdValue(
       provider, pos.liquidity, sqrtPriceX96,
       tickLower, tickUpper, currentTick,
-      pos.tokensOwed0, pos.tokensOwed1,
+      fee0, fee1,
       entry.token0, entry.token1
     );
     if (currentV !== null && currentV > 0) {
@@ -745,8 +771,8 @@ async function _reportV3(provider, entry) {
       if (prices) {
         const d0 = await (new Contract(entry.token0, ERC20_ABI, provider)).decimals().catch(() => 18);
         const d1 = await (new Contract(entry.token1, ERC20_ABI, provider)).decimals().catch(() => 18);
-        const f0 = Number(formatUnits(pos.tokensOwed0, d0)) * (prices.token0Usd || 0);
-        const f1 = Number(formatUnits(pos.tokensOwed1, d1)) * (prices.token1Usd || 0);
+        const f0 = Number(formatUnits(fee0, d0)) * (prices.token0Usd || 0);
+        const f1 = Number(formatUnits(fee1, d1)) * (prices.token1Usd || 0);
         feeStr = `$${(f0 + f1).toFixed(2)}`;
       }
 
