@@ -1,5 +1,6 @@
 // v3_math.js — Uniswap V3 exact math (TickMath + liquidity↔amounts)
 // Uses BigInt fixed-point arithmetic, NO floating-point approximations.
+import { UC } from './config.js';
 
 const Q96 = 1n << 96n;
 const Q128 = 1n << 128n;
@@ -115,7 +116,8 @@ export async function getEthUsdPrice() {
 }
 
 export function getWethUsdPrice() {
-  return _ethUsdPrice || Number(process.env.ETH_USD_PRICE || '3000');
+  const cfgFallback = (() => { try { return UC('fallbackEthUsdPrice'); } catch { return null; } })();
+  return _ethUsdPrice || Number(process.env.ETH_USD_PRICE || cfgFallback || '3000');
 }
 
 // Derive token0/token1 USD prices from pool tick + ETH price.

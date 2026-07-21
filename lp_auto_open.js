@@ -22,7 +22,7 @@ import { depositV3, depositV4, loadState as loadLpState, saveState as saveLpStat
 import { swapBackAfterWithdraw } from './lp_withdraw.js';
 import { lookupV4Pool } from './v4_pool_scanner.js';
 
-const AUTO_OPEN_DRY = 0; // Phase 2: real execution after user review
+const AUTO_OPEN_DRY = process.env.AUTO_OPEN_DRY !== '0' ? 1 : 0; // default dry-run (1)
 
 // Trusted known tokens for swap routing
 const WETH_ADDR = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
@@ -127,20 +127,20 @@ export async function enrichPoolData(po, provider) {
 }
 
 // ===== TREND HISTORY =====
-// Stores TVL/volume snapshots per pool (max 12 = 1hr at 5-min cycles)
-// Sanity filter: rejects TVL jumps > 50% vs previous snapshot (DexScreener
-// glitch guard — observed $434k→$177k in 25min while on-chain was stable).
-const MAX_HISTORY = 12;
+// Trend history params from config
+const cfgTr = (k, d) => { try { return UC('lp.' + k) ?? d; } catch { return d; } };
+const MAX_HISTORY = cfgTr('trendMaxHistory', 12);
+const GLITCH_PCT  = cfgTr('tvlGlitchMaxChangePct', 50) / 100;
 
 export function recordTrendSnapshot(po) {
   if (!po.trendHistory) po.trendHistory = [];
   const newTvl = po.tvlUsd || 0;
   const prev = po.trendHistory.length > 0 ? po.trendHistory[po.trendHistory.length - 1].tvlUsd : 0;
 
-  // Sanity filter: clamp > 50% change from previous snapshot (DexScreener glitch guard)
+  // Sanity filter: clamp > glitchPct change from previous snapshot
   if (prev > 0 && newTvl > 0) {
     const change = Math.abs(newTvl - prev) / prev;
-    if (change > 0.5) {
+    if (change > GLITCH_PCT) {
       const clamped = Math.round(prev * (1 + Math.sign(newTvl - prev) * 0.5));
       console.log(`  [TVL GLITCH] ${po.baseToken?.symbol || '?'}: $${prev}→$${newTvl} (${(change*100).toFixed(0)}%) — clamped to $${clamped}`);
       po.trendHistory.push({ time: Date.now(), tvlUsd: clamped, volume24h: po.volume24h || 0, glitch: true });
@@ -159,17 +159,19 @@ export function recordTrendSnapshot(po) {
   }
 }
 
-// Linear regression slope on TVL from LAST 4 NON-GLITCH entries,
-// returns % change per cycle. Glitch entries (DexScreener spikes > 50%)
-// are excluded to avoid false trends from bad data.
+// Trend detection parameters from config
+const MIN_POINTS   = cfgTr('trendMinDataPoints', 4);
+const UP_THRESH    = cfgTr('trendUpThresholdPct', 2.0);
+const DOWN_THRESH  = cfgTr('trendDownThresholdPct', -2.0);
+
 export function computeTrend(po) {
   const h = po.trendHistory;
-  if (!h || h.length < 4) return { direction: 'neutral', slopePct: 0, reason: `< 4 data points` };
+  if (!h || h.length < MIN_POINTS) return { direction: 'neutral', slopePct: 0, reason: `< ${MIN_POINTS} data points` };
 
-  // Use last 4 non-glitch entries
+  // Use last N non-glitch entries
   const clean = h.filter(e => !e.glitch);
-  const recent = clean.slice(-4);
-  if (recent.length < 4) return { direction: 'neutral', slopePct: 0, reason: `< 4 non-glitch points` };
+  const recent = clean.slice(-MIN_POINTS);
+  if (recent.length < MIN_POINTS) return { direction: 'neutral', slopePct: 0, reason: `< ${MIN_POINTS} non-glitch points` };
   const N = recent.length;
   let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
   const meanY = recent.reduce((s, p) => s + p.tvlUsd, 0) / N;
@@ -185,8 +187,8 @@ export function computeTrend(po) {
   const slopePct = (slope / meanY) * 100;
 
   let direction = 'flat';
-  if (slopePct > 2.0) direction = 'up';
-  else if (slopePct < -2.0) direction = 'down';
+  if (slopePct > UP_THRESH) direction = 'up';
+  else if (slopePct < DOWN_THRESH) direction = 'down';
 
   return { direction, slopePct: Math.round(slopePct * 100) / 100 };
 }
@@ -215,7 +217,7 @@ async function _crossCheckOnchain(positions) {
 function checkGovernance(uniqueToken) {
   const lpState = loadLpState();
   const positions = lpState.positions || [];
-  const MAX = Number(process.env.MAX_LP_POSITIONS || 3);
+  const MAX = Number(process.env.MAX_LP_POSITIONS || UC('lp.maxActivePositions') || 3);
 
   // On-chain cross-check (fire-and-forget, setiap ~20 panggilan)
   _govCheckCount++;
@@ -309,7 +311,9 @@ export async function checkHoneypot(po) {
   try { provider = await makeProvider('LP_EXEC_RPC_URL'); } catch { return true; }
   const quoter = new Contract(V3.quoterV2, V3_QUOTERV2_ABI, provider);
   const TIERS = [10000, 3000, 500, 100];
-  const BUY_AMOUNT = parseEther('0.001');
+  const hpBuyEth  = UC('lp.honeypotBuyAmountEth') || 0.001;
+  const hpMinRec  = (UC('lp.honeypotMinRecoveryPct') || 50) / 100;
+  const BUY_AMOUNT = parseEther(String(hpBuyEth));
 
   for (const token of nonWeth) {
     let buyEverWorked = false;
@@ -327,7 +331,7 @@ export async function checkHoneypot(po) {
       try {
         const r = await quoter.quoteExactInputSingle.staticCall([token, WETH_ADDR, tokenAmount, fee, 0]);
         const wethBack = r[0];
-        if (wethBack && wethBack >= BUY_AMOUNT / 2n) {
+        if (wethBack && wethBack >= BUY_AMOUNT * BigInt(Math.round(hpMinRec * 100)) / 100n) {
           console.log(`  HONEYPOT TEST: ${token.slice(0, 10)} passed at fee=${fee}`);
           passed = true;
           break;
@@ -540,8 +544,10 @@ export async function genericSwap(poolInfo, amountEth, provider, wallet, config 
   const router = new Contract(V3.swapRouter02, V3_SWAP_ROUTER_ABI, wallet);
   const quoter = new Contract(V3.quoterV2, V3_QUOTERV2_ABI, provider);
 
-  // Split amount: half for non-WETH side, half kept as WETH
-  const swapAmount = amountEth / 2n;
+  // Split amount from config
+  const swapRatioPct = UC('lp.swapRatioPct') || 50;
+  const swapNum = BigInt(swapRatioPct);
+  const swapAmount = amountEth * swapNum / 100n;
   const wethAmount = amountEth - swapAmount;
 
   console.log(`  Total: ${formatEther(amountEth)} ETH → ${formatEther(swapAmount)} for swap + ${formatEther(wethAmount)} WETH kept`);
@@ -583,7 +589,7 @@ export async function genericSwap(poolInfo, amountEth, provider, wallet, config 
 // ===== GENERIC DEPOSIT =====
 // Maps poolInfo → depositV3/depositV4 from lp_deposit.js (single source of truth)
 export async function genericDeposit(poolInfo, amountEth, provider, wallet, config = null) {
-  const cfg = config || { rangeSymmetricPct: 15, slippagePct: 1, deadlineSec: 300 };
+  const cfg = config || { rangeSymmetricPct: UC('lp.rangeSymmetricPct') || 15, slippagePct: UC('lp.slippagePct') || 1, deadlineSec: UC('lp.deadlineSec') || 300 };
 
   if (!wallet) {
     console.log(`\n=== genericDeposit (DRY) — ${poolInfo.poolAddr.slice(0, 14)}...`);
@@ -653,7 +659,8 @@ export async function autoOpenExecute(po, provider) {
   }
 
   // Step 1: Swap
-  const amountEth = parseEther('0.01'); // 0.005 ETH per side = 0.01 total
+  const posSizeEth = UC('lp.positionSizeEth') || 0.01;
+  const amountEth = parseEther(String(posSizeEth));
   const config = UC('lp');
   console.log(`\n--- Step 1: Swap ${formatEther(amountEth)} ETH → tokens${config.depositMode === 'single-side-eth' ? ' (single-side-eth: wrapping only)' : ''} ---`);
   const swapResult = await genericSwap(poolInfo, amountEth, provider, wallet, config);

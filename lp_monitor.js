@@ -18,10 +18,10 @@ const AUTO_CLOSE_DRY = process.env.AUTO_CLOSE_DRY !== '0';
 const FORCE_TRIGGER = process.env.FORCE_TRIGGER === '1';
 const LIVE = process.env.DRY === '0' && process.env.PRIVATE_KEY;
 
-// --- TP config constants ---
-const TP_ARM_THRESHOLD = 7;    // % net gain to arm
-const TP_TRAIL_DISTANCE = 1;   // % drop from peak to trigger
-const DEFAULT_POSITION_VALUE_ETH = 0.01; // standard auto-open position value
+// --- TP config constants (from user-config.json) ---
+const TP_ARM_THRESHOLD = UC('lp.takeProfitArmPct') || 20;
+const TP_TRAIL_DISTANCE = UC('lp.takeProfitTrailPct') || 5;
+const DEFAULT_POSITION_VALUE_ETH = UC('lp.positionSizeEth') || 0.01;
 
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { positions: [], monitor: {} }; }
@@ -861,7 +861,8 @@ async function main() {
 
   if (isWatch) {
     console.log(`Continuous monitoring every ${config.monitorIntervalMs}ms. Ctrl+C to stop.`);
-    console.log('Periodic position report every 300s (5 min) to Telegram.');
+    const reportIntervalSec = Math.round((UC('lp.periodicReportIntervalMs') || 300000) / 1000);
+    console.log(`Periodic position report every ${reportIntervalSec}s (${Math.round(reportIntervalSec/60)} min) to Telegram.`);
     setInterval(() => {
       sendPeriodicReport(provider).catch(e => console.error('Periodic report error:', e.shortMessage || e.message));
     }, 300000);

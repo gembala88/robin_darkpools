@@ -82,9 +82,98 @@
     "rangeDownPct": 20,
     "slippagePct": 1,
     "deadlineSec": 1800,
-    "ilExitThresholdPct": 10,
+    "ilExitThresholdPct": 20,
     "monitorIntervalMs": 25000,
     "maxConsecutiveFails": 3,
-    "circuitBreakerCooldownMin": 30
+    "circuitBreakerCooldownMin": 30,
+
+    "--- LP GATES ---": "All auto-open gate thresholds (single source of truth)",
+    "scoreGateMin": 5,
+    "hhiGateMax": 9500,
+    "providersGateMin": 10,
+    "tvlUsdGateMin": 2000,
+
+    "--- LP POSITION ---": "Position sizing and limits",
+    "positionSizeEth": 0.01,
+    "maxActivePositions": 3,
+    "tokenCooldownConsecutive": 2,
+    "tokenCooldownHours": 3,
+    "swapRatioPct": 50,
+
+    "--- LP TP/IL ---": "Take-profit and impermanent loss thresholds",
+    "takeProfitArmPct": 20,
+    "takeProfitTrailPct": 5,
+    "periodicReportIntervalMs": 300000,
+
+    "--- LP HONEYPOT ---": "Self-test parameters",
+    "honeypotBuyAmountEth": 0.001,
+    "honeypotMinRecoveryPct": 50,
+
+    "--- LP TREND ---": "TVL trend detection parameters",
+    "trendMaxHistory": 12,
+    "trendMinDataPoints": 4,
+    "trendUpThresholdPct": 2.0,
+    "trendDownThresholdPct": -2.0,
+    "tvlGlitchMaxChangePct": 50,
+
+    "--- LP SCORE WEIGHTS ---": "Score weights (must sum to 100)",
+    "scoreWeights": {
+      "volumeTvlRatio": 10,
+      "swaps24h": 20,
+      "tvlUsd": 25,
+      "ageDays": 10,
+      "priceChange": 5,
+      "gmgnClean": 10,
+      "momentum5m": 20
+    },
+
+    "--- LP SCORE FORMULA ---": "Scoring formula scalars, caps, and thresholds",
+    "scoreFormula": {
+      "tvlLogFloor": 1000,
+      "tvlLogFactor": 20,
+      "tvlLogCap": 100,
+      "tvlGuardDenom": 50000,
+      "volTvlLogFactor": 50,
+      "volTvlCap": 100,
+      "swapsScoreCap": 1000,
+      "ageMaxDays": 30,
+      "priceStablePct": 50,
+      "priceModeratePct": 200,
+      "priceStableScore": 80,
+      "priceModerateScore": 50,
+      "priceWildScore": 20,
+      "momentumLogFactor": 33,
+      "momentumCap": 100
+    },
+
+    "--- LP HHI PENALTY ---": "LP concentration penalty parameters",
+    "hhiPenaltyThreshold": 2500,
+    "hhiPenaltyScale": 150,
+    "hhiPenaltyMax": 50,
+
+    "--- LP GUARDS ---": "Dead-token and pump-guard thresholds",
+    "deadTokenMinSwaps24h": 5,
+    "pumpGuardMinAgeHours": 24,
+    "pumpGuardMaxVolTvlRatio": 15,
+    "pumpGuardMaxPriceChangePct": 500,
+
+    "--- LP MISC ---": "Other timing parameters",
+    "hhiRetryCooldownHours": 6
+  },
+  "--- FALLBACK PRICES ---": "Used when live price feeds fail",
+  "fallbackEthUsdPrice": 3000,
+  "--- THESIS SCORING ---": "Thesis match scoring for token discovery",
+  "scoring": {
+    "thesis": {
+      "mcapThreshold": 500000,
+      "volumeThreshold": 1000000,
+      "robinFunBonus": 5,
+      "utilityBonus": 5,
+      "utilityKeywords": ["swap", "dao", "vault", "staking", "bridge", "lending", "yield", "farm", "launchpad", "synthetics", "perps", "oracle", "crosschain", "defi"],
+      "matchThreshold": 10,
+      "milestones": [25, 50, 75, 100]
+    },
+    "llmScoreDeltaSkip": 15,
+    "scoreMinGmgnCheck": 10
   }
 }

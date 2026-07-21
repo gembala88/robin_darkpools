@@ -377,32 +377,40 @@ function checkCriteria(info, metrics) {
 // 2. Volume > $1M (24h dari GMGN atau cumulative ETH proxy)
 // 3. Exclude flap.fun (otomatis +5 karena semua token kita RobinFun)
 // 4. Utility keyword di nama/symbol (bonus opsional)
-// Skor >= 10 dari maks 20 = "THESIS MATCH"
 function computeThesisScore(info) {
+  const t = UC('scoring.thesis') || {};
+  const mcapThresh   = t.mcapThreshold   ?? 500000;
+  const volThresh    = t.volumeThreshold ?? 1000000;
+  const volProxy     = volThresh / 2;
+  const robinFunB    = t.robinFunBonus   ?? 5;
+  const utilB        = t.utilityBonus    ?? 5;
+  const utilWords    = t.utilityKeywords ?? ['swap', 'dao', 'vault', 'yield', 'stake', 'bridge', 'lend', 'protocol', 'pay', 'fund', 'bond', 'share', 'pool', 'farm'];
+  const matchMin     = t.matchThreshold  ?? 10;
+  const ethUsdProxy  = UC('fallbackEthUsdPrice') || 3000;
+
   let score = 0;
 
-  // 1. Market cap > $500k
+  // 1. Market cap threshold
   const mcap = info.gmgnMcap || 0;
-  if (mcap > 500000) score += 5;
+  if (mcap > mcapThresh) score += robinFunB;
 
-  // 2. Volume > $1M (24h GMGN, atau cumulative ETH ~$2k/ETH sebagai proxy)
+  // 2. Volume threshold (GMGN 24h, atau cumulative ETH sebagai proxy)
   const vol24h = info.gmgnVolume24h || 0;
-  const totalEthUsd = Number(formatEther(BigInt(info.totalEthIn || '0'))) * 2000;
-  if (vol24h > 1000000 || totalEthUsd > 500000) score += 5;
+  const totalEthUsd = Number(formatEther(BigInt(info.totalEthIn || '0'))) * ethUsdProxy;
+  if (vol24h > volThresh || totalEthUsd > volProxy) score += robinFunB;
 
-  // 3. Bukan flap.fun — semua token kita dari RobinFun factories, otomatis +5
-  score += 5;
+  // 3. RobinFun token bonus
+  score += robinFunB;
 
-  // 4. Utility keyword heuristic (ringan, dari nama/symbol)
+  // 4. Utility keyword heuristic
   const sym = (info.symbol || '').toLowerCase();
-  const utilWords = ['swap', 'dao', 'vault', 'yield', 'stake', 'bridge', 'lend', 'protocol', 'pay', 'fund', 'bond', 'share', 'pool', 'farm'];
-  if (utilWords.some(w => sym.includes(w))) score += 5;
+  if (utilWords.some(w => sym.includes(w))) score += utilB;
 
-  return { score, match: score >= 10 };
+  return { score, match: score >= matchMin };
 }
 
 // ===== MILESTONE NOTIFICATIONS =====
-const MILESTONES = [25, 50, 75, 100];
+const MILESTONES = (UC('scoring.thesis') || {}).milestones || [25, 50, 75, 100];
 
 async function checkMilestone(info, metrics) {
   const grad = info.lastGradPct;
@@ -439,7 +447,8 @@ async function evaluateWithLLM(info, metrics) {
   const cooldownMs = CFG.llmCooldownHours * 3600 * 1000;
   const sinceLastEval = now - (info.lastLLMEval || 0);
   const scoreDelta = metrics.compositeScore - (info.llmScoreAtLastEval || 0);
-  if (sinceLastEval < cooldownMs && scoreDelta <= 15) return;
+  const deltaSkip = UC('scoring.llmScoreDeltaSkip') || 15;
+  if (sinceLastEval < cooldownMs && scoreDelta <= deltaSkip) return;
 
   // Rate-limit: max 1 LLM call per 10s regardless of token count
   if (Date.now() - _lastLLMCall < 10000) return;
@@ -752,7 +761,8 @@ async function evaluateAndNotify(provider, blockNumber, isInitial = false) {
     }
 
     // GMGN check (once per token, cached 5 min)
-    if (!info.gmgnChecked && metrics.compositeScore >= 10) {
+    const gmgnScoreMin = UC('scoring.scoreMinGmgnCheck') || 10;
+    if (!info.gmgnChecked && metrics.compositeScore >= gmgnScoreMin) {
       const g = await checkGMGN(info.token);
       if (g) {
         info.gmgnChecked = true;

@@ -48,16 +48,19 @@ const DS_SEARCH_TERMS = cfgDS('searchTerms') || [
   'freeop', 'pooch', 'oc', 'bread', 'santacoin', 'trashy', 'mystery',
 ];
 
-// ===== SCORE WEIGHTS =====
-const W = {
-  volumeTvlRatio: 10,
-  swaps24h:       20,
-  tvlUsd:         25,
-  ageDays:        10,
-  priceChange:     5,
-  gmgnClean:      10,
-  momentum5m:     20,
-};
+// ===== SCORE WEIGHTS (from config — single source of truth) =====
+const W = (() => {
+  const w = UC('lp.scoreWeights') || {};
+  return {
+    volumeTvlRatio:  w.volumeTvlRatio  ?? 10,
+    swaps24h:        w.swaps24h        ?? 20,
+    tvlUsd:          w.tvlUsd          ?? 25,
+    ageDays:         w.ageDays         ?? 10,
+    priceChange:     w.priceChange      ?? 5,
+    gmgnClean:       w.gmgnClean       ?? 10,
+    momentum5m:      w.momentum5m      ?? 20,
+  };
+})();
 
 // ===== DEXSCREENER FETCH =====
 let lastDsCall = 0;
@@ -440,39 +443,56 @@ function computeScore(po) {
   const ageDays = po.pairCreatedAt ? (Date.now() - po.pairCreatedAt) / 86400000 : 0;
   const m5swaps = (po.m5buys || 0) + (po.m5sells || 0);
 
-  // TVL score (log scale: $1k=0, $10k=20, $100k=40, $1M=60, $10M=80, $100M=100)
-  const tvlScore = Math.min(Math.max(0, Math.log10(Math.max(tvl, 1000) / 1000) * 20), 100) * (W.tvlUsd / 100);
+  // ===== SCORING FORMULA (from config) =====
+  const sf = UC('lp.scoreFormula') || {};
+  const tvlLogFloor   = sf.tvlLogFloor   ?? 1000;
+  const tvlLogFactor  = sf.tvlLogFactor  ?? 20;
+  const tvlLogCap     = sf.tvlLogCap     ?? 100;
+  const tvlGuardDenom = sf.tvlGuardDenom ?? 50000;
+  const volTvlFactor  = sf.volTvlLogFactor ?? 50;
+  const volTvlCap     = sf.volTvlCap     ?? 100;
+  const swapsCap      = sf.swapsScoreCap ?? 1000;
+  const ageMaxDays    = sf.ageMaxDays    ?? 30;
+  const priceStable   = sf.priceStablePct   ?? 50;
+  const priceModerate = sf.priceModeratePct ?? 200;
+  const pStableScore  = sf.priceStableScore  ?? 80;
+  const pModScore     = sf.priceModerateScore ?? 50;
+  const pWildScore    = sf.priceWildScore    ?? 20;
+  const momFactor     = sf.momentumLogFactor ?? 33;
+  const momCap        = sf.momentumCap       ?? 100;
 
-  // Volume/TVL ratio with log scale (diminishes extreme ratio advantage) + minimum TVL guard
-  const tvlGuard = Math.min(tvl / 50000, 1);
+  // TVL score (log scale)
+  const tvlScore = Math.min(Math.max(0, Math.log10(Math.max(tvl, tvlLogFloor) / tvlLogFloor) * tvlLogFactor), tvlLogCap) * (W.tvlUsd / 100);
+
+  // Volume/TVL ratio with log scale
+  const tvlGuard = Math.min(tvl / tvlGuardDenom, 1);
   const volTvlRatio = tvl > 0 ? vol / tvl : 0;
-  const volRaw = Math.min(Math.log10(Math.max(volTvlRatio, 0.1) + 1) * 50, 100);
+  const volRaw = Math.min(Math.log10(Math.max(volTvlRatio, 0.1) + 1) * volTvlFactor, volTvlCap);
   const volTvlScore = volRaw * tvlGuard * (W.volumeTvlRatio / 100);
 
   // Swap count (24h)
-  const swapScore = Math.min(swaps / 1000, 100) * (W.swaps24h / 100);
+  const swapScore = Math.min(swaps / swapsCap, 100) * (W.swaps24h / 100);
 
-  // Age score (prefer newer pools)
-  const ageScore = Math.max(0, Math.min((30 - ageDays) / 30 * 100, 100)) * (W.ageDays / 100);
+  // Age score
+  const ageScore = Math.max(0, Math.min((ageMaxDays - ageDays) / ageMaxDays * 100, 100)) * (W.ageDays / 100);
 
   // Price change stability
   let pcScore = 50;
   const pc = po.priceChange24h;
   if (pc !== null && pc !== undefined) {
-    if (Math.abs(pc) < 50) pcScore = 80;
-    else if (Math.abs(pc) < 200) pcScore = 50;
-    else pcScore = 20;
+    if (Math.abs(pc) < priceStable) pcScore = pStableScore;
+    else if (Math.abs(pc) < priceModerate) pcScore = pModScore;
+    else pcScore = pWildScore;
   }
   const priceScore = pcScore * (W.priceChange / 100);
 
   // GMGN
   const gmgnScore = (po.gmgnChecked && !po.gmgnFlags?.length) ? (W.gmgnClean / 100) * 100 : 0;
 
-  // Momentum 5min (active right now)
+  // Momentum 5min
   let m5Score = 0;
   if (m5swaps > 0) {
-    const m5vol = po.m5vol || 0;
-    m5Score = Math.min(Math.log10(m5swaps + 1) * 33, 100) * (W.momentum5m / 100);
+    m5Score = Math.min(Math.log10(m5swaps + 1) * momFactor, momCap) * (W.momentum5m / 100);
   }
 
   const total = volTvlScore + swapScore + tvlScore + ageScore + priceScore + gmgnScore + m5Score;
@@ -682,10 +702,13 @@ async function _computeHHIImpl(poolAddr, poolState) {
   poolState.hhiChecked = true;
   poolState.hhiChecking = false;
 
-  // Penalty: HHI > 2500 = concentrated. Scale: 0 to -50
+  // Penalty: HHI > threshold = concentrated. Scale: 0 to -maxPenalty
+  const hhiThresh = cfgLp('hhiPenaltyThreshold') || 2500;
+  const hhiScale  = cfgLp('hhiPenaltyScale')     || 150;
+  const hhiMax    = cfgLp('hhiPenaltyMax')       || 50;
   let penalty = 0;
-  if (hhi > 2500) {
-    penalty = -Math.min(Math.round((hhi - 2500) / 150), 50);
+  if (hhi > hhiThresh) {
+    penalty = -Math.min(Math.round((hhi - hhiThresh) / hhiScale), hhiMax);
   }
   poolState.hhiPenalty = penalty;
   poolState.hhiData = {
@@ -835,8 +858,11 @@ async function _computeV4HHIImpl(poolId, poolState) {
   poolState.hhiChecked = true;
   poolState.hhiChecking = false;
 
+  const hhiThresh = cfgLp('hhiPenaltyThreshold') || 2500;
+  const hhiScale  = cfgLp('hhiPenaltyScale')     || 150;
+  const hhiMax    = cfgLp('hhiPenaltyMax')       || 50;
   let penalty = 0;
-  if (hhi > 2500) penalty = -Math.min(Math.round((hhi - 2500) / 150), 50);
+  if (hhi > hhiThresh) penalty = -Math.min(Math.round((hhi - hhiThresh) / hhiScale), hhiMax);
   poolState.hhiPenalty = penalty;
   poolState.hhiData = { hhi: Math.round(hhi), providers: pc, penalty };
   console.log(`  V4 HHI for ${poolId.slice(0, 18)}: HHI=${Math.round(hhi)} providers=${pc} penalty=${penalty}`);
@@ -850,14 +876,18 @@ function passesFilters(po) {
   const minSwaps = cfgSc('minSwaps24h')  || 50;
   const excludeV2 = po.version === 'v2' || (po.labels && po.labels.includes('v2'));
 
-  // Dead-token guard: no buys OR insufficient activity
-  if (po.volume24h === 0 || po.buys24h === 0 || po.swaps24h < 5) return false;
+  // Dead-token guard
+  const deadMinSwaps = cfgLp('deadTokenMinSwaps24h') || 5;
+  if (po.volume24h === 0 || po.buys24h === 0 || po.swaps24h < deadMinSwaps) return false;
 
-  // Extreme-pump guard: age < 24h AND (vol/TVL > 15x OR |priceChange| > 500%)
+  // Extreme-pump guard
+  const pumpAgeHours  = cfgLp('pumpGuardMinAgeHours')         || 24;
+  const pumpMaxVolTvl = cfgLp('pumpGuardMaxVolTvlRatio')      || 15;
+  const pumpMaxPc     = cfgLp('pumpGuardMaxPriceChangePct')   || 500;
   const ageHours = po.pairCreatedAt ? (Date.now() - po.pairCreatedAt) / 3600000 : Infinity;
   const volTvlRatio = po.tvlUsd > 0 ? po.volume24h / po.tvlUsd : 0;
   const priceChangeAbs = Math.abs(po.priceChange24h ?? 0);
-  if (ageHours < 24 && (volTvlRatio > 15 || priceChangeAbs > 500)) return false;
+  if (ageHours < pumpAgeHours && (volTvlRatio > pumpMaxVolTvl || priceChangeAbs > pumpMaxPc)) return false;
 
   return po.tvlUsd >= minTvl && po.volume24h >= minVol && po.swaps24h >= minSwaps && !excludeV2;
 }
@@ -1008,14 +1038,18 @@ async function evaluatePools() {
     // yang kemudian punya aktivitas bisa dicek ulang.
     if (po.hhiChecked && (po.hhiData === undefined || po.hhiData.hhi === undefined)) {
       const lastRetry = po.hhiRetryAt || 0;
-      if (Date.now() - lastRetry > 6 * 3600 * 1000) {
-        console.log(`  HHI: resetting hhiChecked for ${po.pairAddress.slice(0, 14)} (${po.hhiInvalidReason || 'no valid data'} — retry after 6h)`);
+      const hhiRetryMs = (cfgLp('hhiRetryCooldownHours') || 6) * 3600 * 1000;
+      if (Date.now() - lastRetry > hhiRetryMs) {
+        console.log(`  HHI: resetting hhiChecked for ${po.pairAddress.slice(0, 14)} (${po.hhiInvalidReason || 'no valid data'} — retry after ${hhiRetryMs/3600000}h)`);
         po.hhiChecked = false;
         po.hhiRetryAt = Date.now();
       }
     }
-    if (po.score >= 5 && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= 2000) {
-      const cooldownOk = !po.hhiFailedAt || (Date.now() - po.hhiFailedAt) > 300000; // 5 min
+    const minScoreGate = cfgLp('scoreGateMin') || 5;
+    const minTvlGate   = cfgLp('tvlUsdGateMin') || 2000;
+    if (po.score >= minScoreGate && !po.hhiChecked && !po.hhiChecking && po.tvlUsd >= minTvlGate) {
+      const hhiFailCooldownMs = 300000; // 5 min between HHI retries
+      const cooldownOk = !po.hhiFailedAt || (Date.now() - po.hhiFailedAt) > hhiFailCooldownMs;
       if (!cooldownOk) continue;
       try {
         const isV4 = (po.labels || []).some(l => l.toLowerCase() === 'v4');
@@ -1042,36 +1076,38 @@ async function evaluatePools() {
       notified++;
     }
 
-    // Auto-open (Phase 2):
-    // Gates: trend UP, score >= 5, HHI < 9500, providers >= 10, GMGN clean, TVL >= $2k, governance OK
-    // Exec provider: LP_EXEC_RPC_URL (terpisah dari LP_SCREENER_RPC_URL untuk discovery)
+    // Auto-open (Phase 2): all gates from config
+    const gScore    = cfgLp('scoreGateMin')          || 5;
+    const gHhiMax   = cfgLp('hhiGateMax')            || 9500;
+    const gProvMin  = cfgLp('providersGateMin')      || 10;
+    const gTvlMin   = cfgLp('tvlUsdGateMin')         || 2000;
     const sym = po.baseToken?.symbol || '?';
     const gateScore = po.score || 0;
     const gateHhi = po.hhiData?.hhi;
     const gateProviders = po.hhiData?.providers || 0;
     const gateTvl = po.tvlUsd || 0;
     let gateFail = null;
-    if (gateScore < 5) gateFail = `score ${gateScore} < 5`;
+    if (gateScore < gScore) gateFail = `score ${gateScore} < ${gScore}`;
     else if (gateHhi === undefined) {
       if (po.hhiChecked) gateFail = `HHI checked but invalid (${po.hhiInvalidReason || 'no hhiData'})`;
       else if (po.hhiFailed) gateFail = `HHI belum valid (gagal ${po.hhiFailed}x, cooldown ${Math.ceil(Math.max(0, 5 - (Date.now()-po.hhiFailedAt)/60000))}min)`;
       else gateFail = `HHI belum valid (pending)`;
     }
-    else if (gateHhi >= 9500) gateFail = `HHI ${gateHhi} >= 9500`;
-    else if (gateProviders < 10) gateFail = `${sym}: hanya ${gateProviders} providers, minimal 10`;
+    else if (gateHhi >= gHhiMax) gateFail = `HHI ${gateHhi} >= ${gHhiMax}`;
+    else if (gateProviders < gProvMin) gateFail = `${sym}: hanya ${gateProviders} providers, minimal ${gProvMin}`;
     else if (!po.gmgnChecked) gateFail = 'GMGN belum dicek';
     else if (po.gmgnFlags && po.gmgnFlags.length > 0) gateFail = `GMGN flagged: ${po.gmgnFlags.join(',')}`;
-    else if (gateTvl < 2000) gateFail = `TVL $${gateTvl.toLocaleString()} < $2k`;
-    // Gate 0.5: Per-token cooldown — jika token yang SAMA sudah auto-open
-    // 2x berturut-turut, jeda 3 jam sebelum boleh auto-open lagi.
-    // Dipaksa coba token lain, bukan approve token yang sama terus-menerus.
+    else if (gateTvl < gTvlMin) gateFail = `TVL $${gateTvl.toLocaleString()} < $${gTvlMin.toLocaleString()}`;
+    // Per-token cooldown (from config)
+    const cdConsecutive = cfgLp('tokenCooldownConsecutive') || 2;
+    const cdHours       = cfgLp('tokenCooldownHours')       || 3;
+    const CD_MS = cdHours * 3600 * 1000;
     if (!gateFail && po.baseToken?.address && state.autoOpenCooldown) {
       const cd = state.autoOpenCooldown[po.baseToken.address];
-      if (cd && cd.consecutive >= 2) {
+      if (cd && cd.consecutive >= cdConsecutive) {
         const elapsed = Date.now() - cd.lastTime;
-        const COOLDOWN_MS = 3 * 3600 * 1000;
-        if (elapsed < COOLDOWN_MS) {
-          const remaining = Math.ceil((COOLDOWN_MS - elapsed) / 60000);
+        if (elapsed < CD_MS) {
+          const remaining = Math.ceil((CD_MS - elapsed) / 60000);
           gateFail = `cooldown ${remaining}min (${cd.consecutive}x berturut-turut)`;
         }
       }
