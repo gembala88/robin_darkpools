@@ -92,6 +92,7 @@
     "hhiGateMax": 9500,
     "providersGateMin": 10,
     "tvlUsdGateMin": 2000,
+    "tvlUsdGateMax": 70000,
 
     "--- LP POSITION ---": "Position sizing and limits",
     "positionSizeEth": 0.01,

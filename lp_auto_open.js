@@ -376,8 +376,10 @@ export async function checkAutoOpenConditions(po) {
   if (!po.gmgnChecked) return { pass: false, reason: 'GMGN not checked' };
   if (po.gmgnFlags && po.gmgnFlags.length > 0) return { pass: false, reason: `GMGN flagged: ${po.gmgnFlags.join(', ')}` };
 
-  // Gate 4: TVL >= $2k (trend gate is primary filter, not TVL size)
+  // Gate 4: TVL range ($2k – $70k)
+  const maxTvl = UC('lp.tvlUsdGateMax') || 70000;
   if ((po.tvlUsd || 0) < 2000) return { pass: false, reason: `TVL $${(po.tvlUsd || 0).toLocaleString()} < $2k` };
+  if ((po.tvlUsd || 0) > maxTvl) return { pass: false, reason: `TVL $${(po.tvlUsd || 0).toLocaleString()} > $${maxTvl.toLocaleString()}, terlalu besar/mapan` };
 
   // Gate 5: Governance
   const uniqueToken = po.baseToken?.address;

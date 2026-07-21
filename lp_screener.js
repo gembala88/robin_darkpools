@@ -1081,6 +1081,7 @@ async function evaluatePools() {
     const gHhiMax   = cfgLp('hhiGateMax')            || 9500;
     const gProvMin  = cfgLp('providersGateMin')      || 10;
     const gTvlMin   = cfgLp('tvlUsdGateMin')         || 2000;
+    const gTvlMax   = cfgLp('tvlUsdGateMax')         || 70000;
     const sym = po.baseToken?.symbol || '?';
     const gateScore = po.score || 0;
     const gateHhi = po.hhiData?.hhi;
@@ -1098,6 +1099,7 @@ async function evaluatePools() {
     else if (!po.gmgnChecked) gateFail = 'GMGN belum dicek';
     else if (po.gmgnFlags && po.gmgnFlags.length > 0) gateFail = `GMGN flagged: ${po.gmgnFlags.join(',')}`;
     else if (gateTvl < gTvlMin) gateFail = `TVL $${gateTvl.toLocaleString()} < $${gTvlMin.toLocaleString()}`;
+    else if (gateTvl > gTvlMax) gateFail = `TVL $${gateTvl.toLocaleString()} > $${gTvlMax.toLocaleString()}, terlalu besar/mapan`;
     // Per-token cooldown (from config)
     const cdConsecutive = cfgLp('tokenCooldownConsecutive') || 2;
     const cdHours       = cfgLp('tokenCooldownHours')       || 3;
