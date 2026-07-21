@@ -142,4 +142,10 @@ pm2 save && pm2 startup
 
 ---
 
+## 🙏 Acknowledgments
+
+The atomic arbitrage engine (`arb.js`, `contracts/ArbExecutor.sol`, `provider.js`) is built on the original work of [FlipZ3ro](https://github.com/FlipZ3ro) — MIT licensed. The LP discovery, scoring, honeypot-testing, and auto-open/close automation system (`lp_screener.js`, `lp_auto_open.js`, `lp_monitor.js`, `telegram_bot.js`, `v4_pool_scanner.js`) is original work built on top of that foundation.
+
+---
+
 🇮🇩 Versi Bahasa Indonesia: **[README.id.md](README.id.md)**
