@@ -86,37 +86,31 @@
     "monitorIntervalMs": 25000,
     "maxConsecutiveFails": 3,
     "circuitBreakerCooldownMin": 30,
-
     "--- LP GATES ---": "All auto-open gate thresholds (single source of truth)",
     "scoreGateMin": 5,
     "hhiGateMax": 9500,
     "providersGateMin": 10,
     "tvlUsdGateMin": 2000,
     "tvlUsdGateMax": 70000,
-
     "--- LP POSITION ---": "Position sizing and limits",
-    "positionSizeEth": 0.01,
+    "positionSizeEth": 0.002,
     "maxActivePositions": 3,
     "tokenCooldownConsecutive": 2,
     "tokenCooldownHours": 3,
     "swapRatioPct": 50,
-
     "--- LP TP/IL ---": "Take-profit and impermanent loss thresholds",
     "takeProfitArmPct": 20,
     "takeProfitTrailPct": 5,
     "periodicReportIntervalMs": 300000,
-
     "--- LP HONEYPOT ---": "Self-test parameters",
     "honeypotBuyAmountEth": 0.001,
     "honeypotMinRecoveryPct": 50,
-
     "--- LP TREND ---": "TVL trend detection parameters",
     "trendMaxHistory": 12,
     "trendMinDataPoints": 4,
     "trendUpThresholdPct": 2.0,
     "trendDownThresholdPct": -2.0,
     "tvlGlitchMaxChangePct": 50,
-
     "--- LP SCORE WEIGHTS ---": "Score weights (must sum to 100)",
     "scoreWeights": {
       "volumeTvlRatio": 10,
@@ -127,7 +121,6 @@
       "gmgnClean": 10,
       "momentum5m": 20
     },
-
     "--- LP SCORE FORMULA ---": "Scoring formula scalars, caps, and thresholds",
     "scoreFormula": {
       "tvlLogFloor": 1000,
@@ -146,22 +139,18 @@
       "momentumLogFactor": 33,
       "momentumCap": 100
     },
-
     "--- LP HHI PENALTY ---": "LP concentration penalty parameters",
     "hhiPenaltyThreshold": 2500,
     "hhiPenaltyScale": 150,
     "hhiPenaltyMax": 50,
-
     "--- LP GUARDS ---": "Dead-token and pump-guard thresholds",
     "deadTokenMinSwaps24h": 5,
     "pumpGuardMinAgeHours": 24,
     "pumpGuardMaxVolTvlRatio": 15,
     "pumpGuardMaxPriceChangePct": 500,
-
     "--- LP FAST-TRACK ---": "New pool watcher (bypasses backlog, checks recent blocks every N ms)",
     "fastTrackEnabled": true,
     "fastTrackIntervalMs": 120000,
-
     "--- LP MISC ---": "Other timing parameters",
     "hhiRetryCooldownHours": 6
   },
@@ -174,9 +163,29 @@
       "volumeThreshold": 1000000,
       "robinFunBonus": 5,
       "utilityBonus": 5,
-      "utilityKeywords": ["swap", "dao", "vault", "staking", "bridge", "lending", "yield", "farm", "launchpad", "synthetics", "perps", "oracle", "crosschain", "defi"],
+      "utilityKeywords": [
+        "swap",
+        "dao",
+        "vault",
+        "staking",
+        "bridge",
+        "lending",
+        "yield",
+        "farm",
+        "launchpad",
+        "synthetics",
+        "perps",
+        "oracle",
+        "crosschain",
+        "defi"
+      ],
       "matchThreshold": 10,
-      "milestones": [25, 50, 75, 100]
+      "milestones": [
+        25,
+        50,
+        75,
+        100
+      ]
     },
     "llmScoreDeltaSkip": 15,
     "scoreMinGmgnCheck": 10
