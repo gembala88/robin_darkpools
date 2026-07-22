@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
+import { exec } from 'node:child_process';
 import { formatEther } from 'ethers';
 import { makeProvider } from './provider.js';
 
@@ -20,6 +21,7 @@ const CONFIG_KEYS = {
 
 let lastUpdateId = 0;
 let commandRunning = false;
+let pendingRestart = null; // { process, chatId, timestamp }
 
 function sendMsg(chatId, text) {
   return fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
@@ -155,11 +157,41 @@ async function cmdSetKey(chatId, cmdName, rawVal, keyMeta, parseFn, validateMsg)
   const cfg = loadConfig();
   deepSet(cfg, keyMeta.path, val);
   saveConfig(cfg);
+  pendingRestart = { process: keyMeta.restart, chatId, timestamp: Date.now() };
   await sendMsg(chatId,
     `✅ <b>${keyMeta.label}</b> diubah ke <b>${val}</b>\n\n` +
-    `⚠️ Restart ${keyMeta.restart} diperlukan:\n<code>pm2 restart ${keyMeta.restart}</code>\n\n` +
+    `Restart <b>${keyMeta.restart}</b> SEKARANG via bot?\n` +
+    `Balas <code>/confirmrestart</code> dalam 5 menit untuk menjalankan:\n` +
+    `<code>pm2 restart ${keyMeta.restart}</code>\n\n` +
+    `Atau abaikan (perubahan tetap tersimpan, restart manual nanti).\n` +
     `Ketik /config untuk verifikasi.`
   );
+}
+
+async function cmdConfirmRestart(chatId) {
+  if (!pendingRestart || pendingRestart.chatId !== chatId) {
+    return sendMsg(chatId, 'Tidak ada permintaan restart yang tertunda. Ubah config dulu dengan /setmax, /setsize, /settp, /setil, atau /setswapratio.');
+  }
+  if (Date.now() - pendingRestart.timestamp > 5 * 60 * 1000) {
+    pendingRestart = null;
+    return sendMsg(chatId, '⏰ Permintaan restart sudah kadaluarsa (lebih dari 5 menit). Silakan ubah config lagi.');
+  }
+  const proc = pendingRestart.process;
+  pendingRestart = null;
+  if (proc !== 'lp-screener' && proc !== 'lp-monitor') {
+    return sendMsg(chatId, `❌ Proses tidak dikenal: ${proc}`);
+  }
+  try {
+    await new Promise((resolve, reject) => {
+      exec(`pm2 restart ${proc}`, (err, stdout, stderr) => {
+        if (err) return reject(err);
+        resolve(stdout);
+      });
+    });
+    await sendMsg(chatId, `✅ <b>${proc}</b> berhasil direstart.`);
+  } catch (e) {
+    await sendMsg(chatId, `❌ Gagal restart ${proc}: ${e.message}`);
+  }
 }
 
 async function handleCommand(text, chatId) {
@@ -192,9 +224,11 @@ async function handleCommand(text, chatId) {
       return cmdSetKey(chatId, '/setswapratio', args[1], CONFIG_KEYS.swapRatioPct,
         v => { const n = parseFloat(v); return (!isNaN(n) && n >= 0 && n <= 100) ? n : null; },
         'Gunakan: /setswapratio &lt;0-100&gt;');
+    case '/confirmrestart':
+      return cmdConfirmRestart(chatId);
     default:
       await sendMsg(chatId,
-        `Unknown command.\n\nAvailable:\n<code>/status</code> — bot overview\n<code>/positions</code> — active LP positions\n<code>/screener</code> — screener overview (tracked, active, passing)\n<code>/pause</code> — pause auto-open\n<code>/resume</code> — resume auto-open\n<code>/config</code> — current LP config\n<code>/setmax</code> — change maxActivePositions\n<code>/setsize</code> — change positionSizeEth\n<code>/settp</code> — change takeProfitArmPct\n<code>/setil</code> — change ilExitThresholdPct\n<code>/setswapratio</code> — change swapRatioPct`);
+        `Unknown command.\n\nAvailable:\n<code>/status</code> — bot overview\n<code>/positions</code> — active LP positions\n<code>/screener</code> — screener overview (tracked, active, passing)\n<code>/pause</code> — pause auto-open\n<code>/resume</code> — resume auto-open\n<code>/config</code> — current LP config\n<code>/setmax</code> — change maxActivePositions\n<code>/setsize</code> — change positionSizeEth\n<code>/settp</code> — change takeProfitArmPct\n<code>/setil</code> — change ilExitThresholdPct\n<code>/setswapratio</code> — change swapRatioPct\n<code>/confirmrestart</code> — konfirmasi restart (dalam 5 menit setelah /set*)`);
   }
 }
 
