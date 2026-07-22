@@ -26,8 +26,6 @@
   "--- LLM EVALUATION ---": "AI agent for advanced token analysis",
   "llmScoreMin": 5,
   "llmCooldownHours": 6,
-  "llmProvider": "nvidia",
-  "llmModel": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
   "--- SCORE WEIGHTS ---": "Composite score = weighted sum of these factors",
   "scoreWeights": {
     "graduation": 0.3,
@@ -55,7 +53,6 @@
   "--- LP SCREENER ---": "LP pool discovery + ranking via DexScreener + on-chain",
   "lpScreener": {
     "pollIntervalMs": 300000,
-    "discoveryIntervalMin": 180,
     "summaryIntervalMin": 360,
     "minTvlUsd": 5000,
     "minVolume24h": 10000,
