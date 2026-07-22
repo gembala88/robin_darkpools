@@ -1059,7 +1059,13 @@ function loadState() {
     state = { pools: {}, lastDiscovery: 0, lastFetch: 0 };
     console.log('no prior state — starting fresh');
   }
-  if (!state.autoOpenCooldown) state.autoOpenCooldown = {};
+  if (!state.autoOpenCooldown) {
+    state.autoOpenCooldown = {};
+    console.log('[DEBUG COOLDOWN INIT] autoOpenCooldown initialized as empty object (state loaded from disk had no cooldown or fresh start)');
+  } else {
+    console.log(`[DEBUG COOLDOWN INIT] autoOpenCooldown loaded from disk: ${Object.keys(state.autoOpenCooldown).length} entries: ${JSON.stringify(state.autoOpenCooldown)}`);
+  }
+  if (!state._seenSymbolAddresses) state._seenSymbolAddresses = {};
 }
 
 function saveState() {
@@ -1188,56 +1194,104 @@ async function evaluatePools() {
     else if (po.gmgnFlags && po.gmgnFlags.length > 0) gateFail = `GMGN flagged: ${po.gmgnFlags.join(',')}`;
     else if (gateTvl < gTvlMin) gateFail = `TVL $${gateTvl.toLocaleString()} < $${gTvlMin.toLocaleString()}`;
     else if (gateTvl > gTvlMax) gateFail = `TVL $${gateTvl.toLocaleString()} > $${gTvlMax.toLocaleString()}, terlalu besar/mapan`;
-    // Per-token cooldown (from config)
+    // Per-token cooldown by SYMBOL (not address) — anti-copycat
     const cdConsecutive = cfgLp('tokenCooldownConsecutive') || 2;
     const cdHours       = cfgLp('tokenCooldownHours')       || 3;
     const CD_MS = cdHours * 3600 * 1000;
-    if (!gateFail && po.baseToken?.address && state.autoOpenCooldown) {
-      const cd = state.autoOpenCooldown[po.baseToken.address];
+    if (!gateFail && po.baseToken?.symbol && state.autoOpenCooldown) {
+      const cdKey = po.baseToken.symbol.toUpperCase();
+      const cd = state.autoOpenCooldown[cdKey];
+      console.log(`  [DEBUG COOLDOWN CHECK] sym=${sym} cdKey=${cdKey} address=${po.baseToken.address} state.autoOpenCooldown keys=${Object.keys(state.autoOpenCooldown).length} entry=${JSON.stringify(cd)}`);
       if (cd && cd.consecutive >= cdConsecutive) {
         const elapsed = Date.now() - cd.lastTime;
         if (elapsed < CD_MS) {
           const remaining = Math.ceil((CD_MS - elapsed) / 60000);
           gateFail = `cooldown ${remaining}min (${cd.consecutive}x berturut-turut)`;
+          console.log(`  [DEBUG COOLDOWN BLOCKED] ${sym}: consecutive=${cd.consecutive} >= ${cdConsecutive} elapsed=${elapsed}ms`);
+        } else {
+          console.log(`  [DEBUG COOLDOWN EXPIRED] ${sym}: consecutive=${cd.consecutive} elapsed=${elapsed}ms > ${CD_MS}ms — allowing`);
         }
+      } else if (cd) {
+        console.log(`  [DEBUG COOLDOWN BELOW THRESH] ${sym}: consecutive=${cd.consecutive} < ${cdConsecutive} — allowing`);
+      } else {
+        console.log(`  [DEBUG COOLDOWN NO ENTRY] ${sym}: no entry for symbol ${cdKey} — allowing`);
       }
+    } else if (!gateFail) {
+      console.log(`  [DEBUG COOLDOWN SKIP] sym=${sym} symbol=${po.baseToken?.symbol} hasAutoOpenCooldown=${!!state.autoOpenCooldown} gateFail=${gateFail}`);
     }
     if (gateFail) {
       console.log(`  [gate] ${sym}: ${gateFail}, skip auto-open check`);
     } else {
       const ao = await checkAutoOpenConditions(po);
       if (ao.pass) {
+        // Fix 2: Symbol collision warning — address baru untuk symbol yang sudah pernah dibuka
+        if (po.baseToken?.symbol && po.baseToken?.address) {
+          const symKey = po.baseToken.symbol.toUpperCase();
+          const seenAddrs = state._seenSymbolAddresses?.[symKey];
+          if (seenAddrs?.length > 0) {
+            const addrLower = po.baseToken.address.toLowerCase();
+            if (!seenAddrs.includes(addrLower)) {
+              const known = seenAddrs.join(', ');
+              console.log(`  [SYMBOL COLLISION] ${symKey}: address ${addrLower} BERBEDA dari yang pernah dibuka: ${known}`);
+              await tgScreener(
+                `⚠️ <b>SYMBOL COLLISION</b>\n` +
+                `<code>${symKey}</code> alamat BARU:\n<code>${po.baseToken.address}</code>\n` +
+                `Berbeda dari yang pernah dibuka:\n<code>${known}</code>\n` +
+                `Kemungkinan token tiruan — investigasi manual diperlukan.`
+              ).catch(() => {});
+            }
+          }
+        }
+
         const execProv = await (process.env.LP_EXEC_RPC_URL
           ? makeProvider('LP_EXEC_RPC_URL')
           : makeProvider('LP_SCREENER_RPC_URL')).catch(() => null);
         const result = await autoOpenExecute(po, execProv);
-        // Update cooldown AFTER sukses auto-open
-        if (result && po.baseToken?.address) {
+        // Update cooldown AFTER sukses auto-open — key by SYMBOL (Fix 1)
+        if (result && po.baseToken?.symbol) {
           if (!state.autoOpenCooldown) state.autoOpenCooldown = {};
+          const cdKey = po.baseToken.symbol.toUpperCase();
           const addr = po.baseToken.address;
-          const prev = state.autoOpenCooldown[addr];
-          if (prev && prev.lastToken === addr) {
-            // Token yang SAMA seperti sebelumnya — increment consecutive
-            state.autoOpenCooldown[addr] = {
+          const prev = state.autoOpenCooldown[cdKey];
+          const symLabel = po.baseToken?.symbol || '?';
+          console.log(`  [DEBUG COOLDOWN UPDATE] ${symLabel} cdKey=${cdKey}: result=${typeof result} address=${addr} prev=${JSON.stringify(prev)}`);
+          if (prev && prev.lastSymbol === cdKey) {
+            // Symbol yang SAMA seperti sebelumnya — increment consecutive
+            state.autoOpenCooldown[cdKey] = {
               consecutive: (prev.consecutive || 0) + 1,
               lastTime: Date.now(),
-              lastToken: addr,
+              lastSymbol: cdKey,
+              lastAddress: addr,
             };
+            console.log(`  [DEBUG COOLDOWN INCREMENTED] ${symLabel}: consecutive now ${state.autoOpenCooldown[cdKey].consecutive}`);
           } else {
-            // Token BARU atau berbeda dari sebelumnya — reset ke 1
-            state.autoOpenCooldown[addr] = {
+            // Symbol BARU — reset ke 1
+            state.autoOpenCooldown[cdKey] = {
               consecutive: 1,
               lastTime: Date.now(),
-              lastToken: addr,
+              lastSymbol: cdKey,
+              lastAddress: addr,
             };
+            console.log(`  [DEBUG COOLDOWN NEW ENTRY] ${symLabel}: set consecutive=1`);
           }
-          // Bersihkan entry token lain yang sudah lama (optional)
+          // Track seen addresses per symbol (Fix 2)
+          if (!state._seenSymbolAddresses) state._seenSymbolAddresses = {};
+          if (!state._seenSymbolAddresses[cdKey]) state._seenSymbolAddresses[cdKey] = [];
+          if (addr && !state._seenSymbolAddresses[cdKey].includes(addr.toLowerCase())) {
+            state._seenSymbolAddresses[cdKey].push(addr.toLowerCase());
+            console.log(`  [SYMBOL COLLISION TRACK] ${symLabel}: recorded address ${addr} for symbol ${cdKey}`);
+          }
+          // Bersihkan entry symbol lain yang sudah lama (optional)
           for (const key of Object.keys(state.autoOpenCooldown)) {
-            if (key !== addr && Date.now() - (state.autoOpenCooldown[key].lastTime || 0) > 7 * 86400000) {
+            if (key !== cdKey && Date.now() - (state.autoOpenCooldown[key].lastTime || 0) > 7 * 86400000) {
+              console.log(`  [DEBUG COOLDOWN CLEANUP] removing stale entry ${key}`);
               delete state.autoOpenCooldown[key];
             }
           }
+          console.log(`  [DEBUG COOLDOWN SAVING] saving state with autoOpenCooldown keys: ${Object.keys(state.autoOpenCooldown).length} seenSymbolAddresses keys: ${Object.keys(state._seenSymbolAddresses || {}).length}`);
           saveState(); // PERSIST cooldown immediately — not just in memory
+        } else {
+          console.log(`  [DEBUG COOLDOWN UPDATE SKIPPED] result=${typeof result} symbol=${po.baseToken?.symbol}`);
         }
       } else {
         console.log(`  [auto-open BLOCKED] ${sym}: ${ao.reason}`);
@@ -1376,6 +1430,7 @@ async function main() {
         lastFetchRun = now;
       }
       // Unconditional save after every cycle — catches cooldown updates, HHI data, etc.
+      console.log(`[DEBUG COOLDOWN UNCONDITIONAL SAVE] autoOpenCooldown has ${Object.keys(state.autoOpenCooldown || {}).length} entries seenSymbolAddresses has ${Object.keys(state._seenSymbolAddresses || {}).length} keys`);
       saveState();
 
       // Periodic summary
