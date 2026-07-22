@@ -373,18 +373,19 @@ async function updatePoolData() {
   if (!addrs.length) return 0;
 
   // Categorize pools by relevance
-  const scoreGate = cfgLp('scoreGateMin') || 5;
+  const hotScoreMin = cfgSc('hotRefreshScoreMin') || 40;
   const now = Date.now();
   const hot = [], newborn = [], warm = [], cold = [];
 
   for (const addr of addrs) {
     const po = state.pools[addr];
     if (!po) continue;
-    // Tier 1: HOT — high-score pools (need freshest data for trend/TP)
-    if ((po.score || 0) >= scoreGate) {
+    // Tier 1: HOT — skor genuinely bagus (threshold terpisah, default 40)
+    // BUKAN scoreGateMin (=5) yang sengaja rendah untuk auto-open eligibility
+    if ((po.score || 0) >= hotScoreMin) {
       hot.push(addr);
     // Tier 2: NEWBORN — baru discovered, masih perlu 1x scoring
-    } else if (po.discoveredAt && now - po.discoveredAt < 900000 && (po.score || 0) < scoreGate) {
+    } else if (po.discoveredAt && now - po.discoveredAt < 900000) {
       newborn.push(addr);
     // Tier 3: WARM — masih ada aktivitas atau skor parsial
     } else if (po.volume24h > 0 || (po.tvlUsd || 0) > 0 || (po.score || 0) >= 2) {

@@ -58,6 +58,7 @@
     "minVolume24h": 10000,
     "minSwaps24h": 50,
     "minCandidateScore": 40,
+    "hotRefreshScoreMin": 40,
     "gmgnMinScore": 30
   },
   "dexScreener": {
