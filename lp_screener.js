@@ -38,6 +38,9 @@ const STATE_FILE = 'lp_screener_state.json';
 let state = { pools: {}, lastDiscovery: 0, lastFetch: 0 };
 let startTime = Date.now();
 let _lastTokenDiag = 0;
+let _rl429consecutive = 0;
+let _rlCooldownUntil = 0;
+let _rlLastNotified = 0;
 
 // ===== HELPERS =====
 const coder = AbiCoder.defaultAbiCoder();
@@ -65,28 +68,60 @@ const W = (() => {
   };
 })();
 
-// ===== DEXSCREENER FETCH =====
+// ===== DEXSCREENER FETCH (rate-limited, exponential backoff, global cooldown) =====
 let lastDsCall = 0;
-async function fetchDexScreener(path) {
+
+async function rateLimitedFetch(url, timeoutMs = 10000) {
+  // Global cooldown: skip all calls if hit sustained 429s
+  if (Date.now() < _rlCooldownUntil) return null;
+
   const now = Date.now();
   const gap = now - lastDsCall;
-  if (gap < 500) await sleep(500 - gap); // max 2 calls/sec
+  if (gap < 500) await sleep(500 - gap);
   lastDsCall = Date.now();
-  const url = `${DS_BASE}${path}`;
+
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (r.status === 429) { console.log('DexScreener 429 — cooling down 10s'); await sleep(10000); return null; }
+    const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (r.status === 429) {
+      _rl429consecutive++;
+      const backoff = Math.min(30000 * Math.pow(2, _rl429consecutive - 1), 300000); // 30s, 60s, 120s… max 5min
+      console.log(`DexScreener 429 #${_rl429consecutive} — cooling ${(backoff / 1000).toFixed(0)}s`);
+      if (_rl429consecutive >= 3) {
+        _rlCooldownUntil = Date.now() + backoff;
+        console.log(`  [RL] global cooldown activated until ${new Date(_rlCooldownUntil).toISOString()}`);
+      }
+      await sleep(backoff);
+
+      // Notify user if sustained 429 for > 5 minutes
+      if (_rl429consecutive >= 6 && Date.now() - _rlLastNotified > 600000) {
+        _rlLastNotified = Date.now();
+        tgScreener(`⚠️ DexScreener rate-limited for ${_rl429consecutive} consecutive retries — data refresh terhambat, sistem mungkin buta`).catch(() => {});
+      }
+      return null;
+    }
+    _rl429consecutive = 0;
+    _rlCooldownUntil = 0;
     return await r.json();
-  } catch (e) { console.log(`DexScreener error: ${e.shortMessage || e.message}`); return null; }
+  } catch (e) {
+    console.log(`DexScreener error: ${e.shortMessage || e.message}`);
+    return null;
+  }
+}
+
+async function fetchDexScreener(path) {
+  return rateLimitedFetch(`${DS_BASE}${path}`, 10000);
 }
 
 async function fetchBatchPools(addrs) {
   if (!addrs.length) return [];
-  // batch up to 30 per call
   const results = [];
   for (let i = 0; i < addrs.length; i += 30) {
     const chunk = addrs.slice(i, i + 30);
     const path = `/pairs/robinhood/${chunk.join(',')}`;
+    if (Date.now() < _rlCooldownUntil) {
+      console.log(`  [RL] cooldown active — skipping remaining ${addrs.length - i} pools`);
+      break;
+    }
     const j = await fetchDexScreener(path);
     if (j?.pairs) results.push(...j.pairs);
   }
@@ -237,14 +272,14 @@ async function filterLiquidPools(provider, pools, label) {
 async function discoverFromTokenEndpoint(url, label) {
   let count = 0;
   try {
-    const data = await (await fetch(url, { signal: AbortSignal.timeout(10000) })).json();
+    const data = await rateLimitedFetch(url, 10000);
     if (!Array.isArray(data)) return 0;
     const rh = data.filter(x => x.chainId === 'robinhood');
     for (const entry of rh) {
       const addr = entry.tokenAddress;
       // Try to find pairs for this token
       try {
-        const pairs = await (await fetch(DEXSCREENER_TOKEN_PAIRS + 'robinhood/' + addr, { signal: AbortSignal.timeout(5000) })).json();
+        const pairs = await rateLimitedFetch(DEXSCREENER_TOKEN_PAIRS + 'robinhood/' + addr, 5000);
         if (Array.isArray(pairs)) {
           for (const p of pairs) {
             const key = lc(p.pairAddress);
@@ -332,11 +367,48 @@ function poolFromDSPair(p) {
   };
 }
 
-// ===== DEXSCREENER DATA UPDATE =====
+// ===== DEXSCREENER DATA UPDATE (prioritized: hot → warm → cold) =====
 async function updatePoolData() {
   const addrs = Object.keys(state.pools);
   if (!addrs.length) return 0;
-  const pairs = await fetchBatchPools(addrs);
+
+  // Categorize pools by relevance
+  const scoreGate = cfgLp('scoreGateMin') || 5;
+  const now = Date.now();
+  const hot = [], warm = [], cold = [];
+
+  for (const addr of addrs) {
+    const po = state.pools[addr];
+    if (!po) continue;
+    // Tier 1: high-score or recently discovered
+    if ((po.score || 0) >= scoreGate || (po.discoveredAt && now - po.discoveredAt < 3600000)) {
+      hot.push(addr);
+    // Tier 2: still has activity (volume or TVL)
+    } else if (po.volume24h > 0 || (po.tvlUsd || 0) > 0) {
+      warm.push(addr);
+    // Tier 3: dead/no activity
+    } else {
+      cold.push(addr);
+    }
+  }
+
+  // Only refresh ALL hot each cycle. Warm every 3 cycles. Cold spread out.
+  const cycle = (state._refreshCycle || 0) + 1;
+  state._refreshCycle = cycle;
+
+  const warmEvery = 3; // refresh warm every N cycles
+  const warmActive = cycle % warmEvery === 1;
+  const warmBatch = warmActive ? warm : [];
+
+  // Cold: refresh ~1/10 per cycle (spread across cycles)
+  const coldChunk = Math.max(1, Math.ceil(cold.length / 10));
+  const coldStart = ((cycle - 1) * coldChunk) % Math.max(1, cold.length);
+  const coldSlice = cold.slice(coldStart, coldStart + coldChunk);
+
+  const batch = [...hot, ...warmBatch, ...coldSlice];
+  console.log(`  [refresh] hot=${hot.length} warm=${warmActive ? warmBatch.length : 0} cold=${coldSlice.length} total=${batch.length} (of ${addrs.length} tracked)`);
+
+  const pairs = await fetchBatchPools(batch);
   let updated = 0;
   for (const p of pairs) {
     const key = lc(p.pairAddress);
