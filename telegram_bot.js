@@ -8,6 +8,15 @@ const TOKEN = process.env.SCREENER_BOT_TOKEN;
 const PAUSE_FLAG = path.join(process.cwd(), 'auto_open_paused.flag');
 const LP_STATE = new URL('./lp_state.json', import.meta.url);
 const SCREENER_STATE = new URL('./screener_state.json', import.meta.url);
+const CONFIG_JSON = new URL('./user-config.json', import.meta.url);
+
+const CONFIG_KEYS = {
+  maxActivePositions: { path: ['lp', 'maxActivePositions'], label: 'maxActivePositions' },
+  positionSizeEth: { path: ['lp', 'positionSizeEth'], label: 'positionSizeEth' },
+  takeProfitArmPct: { path: ['lp', 'takeProfitArmPct'], label: 'takeProfitArmPct' },
+  ilExitThresholdPct: { path: ['lp', 'ilExitThresholdPct'], label: 'ilExitThresholdPct' },
+  swapRatioPct: { path: ['lp', 'swapRatioPct'], label: 'swapRatioPct' },
+};
 
 let lastUpdateId = 0;
 let commandRunning = false;
@@ -109,17 +118,83 @@ async function cmdScreener(chatId) {
   await sendMsg(chatId, lines.join('\n'));
 }
 
+function loadConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_JSON, 'utf8')); } catch { return {}; }
+}
+
+function saveConfig(cfg) {
+  fs.writeFileSync(CONFIG_JSON, JSON.stringify(cfg, null, 2) + '\n');
+}
+
+function deepSet(obj, path, val) {
+  let cur = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (!cur[path[i]] || typeof cur[path[i]] !== 'object') cur[path[i]] = {};
+    cur = cur[path[i]];
+  }
+  cur[path[path.length - 1]] = val;
+}
+
+async function cmdConfig(chatId) {
+  const cfg = loadConfig();
+  const lines = ['<b>⚙️ LP Config</b>\n'];
+  for (const [cmd, meta] of Object.entries(CONFIG_KEYS)) {
+    let val = cfg;
+    for (const p of meta.path) val = val?.[p];
+    lines.push(`  <code>/${cmd}</code> → ${meta.label}: <b>${val ?? 'N/A'}</b>`);
+  }
+  lines.push('', 'Gunakan perintah di atas untuk mengubah nilai.');
+  await sendMsg(chatId, lines.join('\n'));
+}
+
+async function cmdSetKey(chatId, cmdName, rawVal, keyMeta, parseFn, validateMsg) {
+  const val = parseFn(rawVal);
+  if (val === null || val === undefined || isNaN(val)) {
+    return sendMsg(chatId, `Format salah. ${validateMsg}`);
+  }
+  const cfg = loadConfig();
+  deepSet(cfg, keyMeta.path, val);
+  saveConfig(cfg);
+  await sendMsg(chatId,
+    `✅ <b>${keyMeta.label}</b> diubah ke <b>${val}</b>\n\n` +
+    `⚠️ Restart bot diperlukan agar perubahan diterapkan:\n<code>pm2 restart robin-arb</code>\n\n` +
+    `Ketik /config untuk verifikasi.`
+  );
+}
+
 async function handleCommand(text, chatId) {
-  const cmd = text.split(/\s+/)[0].toLowerCase();
+  const args = text.split(/\s+/);
+  const cmd = args[0].toLowerCase();
   switch (cmd) {
     case '/status': return cmdStatus(chatId);
     case '/positions': return cmdPositions(chatId);
     case '/pause': return cmdPause(chatId);
     case '/resume': return cmdResume(chatId);
     case '/screener': return cmdScreener(chatId);
+    case '/config': return cmdConfig(chatId);
+    case '/setmax':
+      return cmdSetKey(chatId, '/setmax', args[1], CONFIG_KEYS.maxActivePositions,
+        v => { const n = parseInt(v); return (!isNaN(n) && n > 0) ? n : null; },
+        'Gunakan: /setmax &lt;angka positif&gt;');
+    case '/setsize':
+      return cmdSetKey(chatId, '/setsize', args[1], CONFIG_KEYS.positionSizeEth,
+        v => { const n = parseFloat(v); return (!isNaN(n) && n > 0) ? n : null; },
+        'Gunakan: /setsize &lt;ETH&gt; (misal 0.002)');
+    case '/settp':
+      return cmdSetKey(chatId, '/settp', args[1], CONFIG_KEYS.takeProfitArmPct,
+        v => { const n = parseFloat(v); return (!isNaN(n) && n > 0) ? n : null; },
+        'Gunakan: /settp &lt;persen&gt; (misal 20)');
+    case '/setil':
+      return cmdSetKey(chatId, '/setil', args[1], CONFIG_KEYS.ilExitThresholdPct,
+        v => { const n = parseFloat(v); return (!isNaN(n) && n > 0) ? n : null; },
+        'Gunakan: /setil &lt;persen&gt; (misal 20)');
+    case '/setswapratio':
+      return cmdSetKey(chatId, '/setswapratio', args[1], CONFIG_KEYS.swapRatioPct,
+        v => { const n = parseFloat(v); return (!isNaN(n) && n >= 0 && n <= 100) ? n : null; },
+        'Gunakan: /setswapratio &lt;0-100&gt;');
     default:
       await sendMsg(chatId,
-        `Unknown command.\n\nAvailable:\n<code>/status</code> — bot overview\n<code>/positions</code> — active LP positions\n<code>/screener</code> — screener overview (tracked, active, passing)\n<code>/pause</code> — pause auto-open\n<code>/resume</code> — resume auto-open`);
+        `Unknown command.\n\nAvailable:\n<code>/status</code> — bot overview\n<code>/positions</code> — active LP positions\n<code>/screener</code> — screener overview (tracked, active, passing)\n<code>/pause</code> — pause auto-open\n<code>/resume</code> — resume auto-open\n<code>/config</code> — current LP config\n<code>/setmax</code> — change maxActivePositions\n<code>/setsize</code> — change positionSizeEth\n<code>/settp</code> — change takeProfitArmPct\n<code>/setil</code> — change ilExitThresholdPct\n<code>/setswapratio</code> — change swapRatioPct`);
   }
 }
 
