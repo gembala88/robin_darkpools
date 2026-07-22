@@ -1237,6 +1237,7 @@ async function evaluatePools() {
               delete state.autoOpenCooldown[key];
             }
           }
+          saveState(); // PERSIST cooldown immediately — not just in memory
         }
       } else {
         console.log(`  [auto-open BLOCKED] ${sym}: ${ao.reason}`);
@@ -1374,6 +1375,8 @@ async function main() {
         }
         lastFetchRun = now;
       }
+      // Unconditional save after every cycle — catches cooldown updates, HHI data, etc.
+      saveState();
 
       // Periodic summary
       if (now - lastSummaryRun > summaryMs) {
