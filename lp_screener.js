@@ -375,38 +375,41 @@ async function updatePoolData() {
   // Categorize pools by relevance
   const scoreGate = cfgLp('scoreGateMin') || 5;
   const now = Date.now();
-  const hot = [], warm = [], cold = [];
+  const hot = [], newborn = [], warm = [], cold = [];
 
   for (const addr of addrs) {
     const po = state.pools[addr];
     if (!po) continue;
-    // Tier 1: high-score or recently discovered
-    if ((po.score || 0) >= scoreGate || (po.discoveredAt && now - po.discoveredAt < 3600000)) {
+    // Tier 1: HOT — high-score pools (need freshest data for trend/TP)
+    if ((po.score || 0) >= scoreGate) {
       hot.push(addr);
-    // Tier 2: still has activity (volume or TVL)
-    } else if (po.volume24h > 0 || (po.tvlUsd || 0) > 0) {
+    // Tier 2: NEWBORN — baru discovered, masih perlu 1x scoring
+    } else if (po.discoveredAt && now - po.discoveredAt < 900000 && (po.score || 0) < scoreGate) {
+      newborn.push(addr);
+    // Tier 3: WARM — masih ada aktivitas atau skor parsial
+    } else if (po.volume24h > 0 || (po.tvlUsd || 0) > 0 || (po.score || 0) >= 2) {
       warm.push(addr);
-    // Tier 3: dead/no activity
+    // Tier 4: COLD — tidak ada aktivitas
     } else {
       cold.push(addr);
     }
   }
 
-  // Only refresh ALL hot each cycle. Warm every 3 cycles. Cold spread out.
+  // HOT: every cycle. NEWBORN: 1 cycle only (then drops to warm/cold).
+  // WARM: every 3 cycles. COLD: spread ~1/20 per cycle.
   const cycle = (state._refreshCycle || 0) + 1;
   state._refreshCycle = cycle;
 
-  const warmEvery = 3; // refresh warm every N cycles
+  const warmEvery = 3;
   const warmActive = cycle % warmEvery === 1;
   const warmBatch = warmActive ? warm : [];
 
-  // Cold: refresh ~1/10 per cycle (spread across cycles)
-  const coldChunk = Math.max(1, Math.ceil(cold.length / 10));
+  const coldChunk = Math.max(1, Math.ceil(cold.length / 20));
   const coldStart = ((cycle - 1) * coldChunk) % Math.max(1, cold.length);
   const coldSlice = cold.slice(coldStart, coldStart + coldChunk);
 
-  const batch = [...hot, ...warmBatch, ...coldSlice];
-  console.log(`  [refresh] hot=${hot.length} warm=${warmActive ? warmBatch.length : 0} cold=${coldSlice.length} total=${batch.length} (of ${addrs.length} tracked)`);
+  const batch = [...hot, ...newborn, ...warmBatch, ...coldSlice];
+  console.log(`  [refresh] hot=${hot.length} newborn=${newborn.length} warm=${warmActive ? warmBatch.length : 0} cold=${coldSlice.length} total=${batch.length} (of ${addrs.length} tracked)`);
 
   const pairs = await fetchBatchPools(batch);
   let updated = 0;
@@ -441,6 +444,22 @@ async function updatePoolData() {
     }
     updated++;
   }
+
+  // GC: hapus cold pool yang sudah >48 jam, tidak pernah punya score, tidak ada aktivitas
+  const gcCutoff = now - 172800000; // 48 jam
+  const stale = [];
+  for (const [addr, po] of Object.entries(state.pools)) {
+    if ((po.score || 0) > 0) continue;
+    if (po.volume24h > 0 || (po.tvlUsd || 0) > 0) continue;
+    if (po.discoveredAt && po.discoveredAt < gcCutoff && (!po.lastUpdated || po.lastUpdated < gcCutoff)) {
+      stale.push(addr);
+    }
+  }
+  // Max 500 removal per cycle — jangan hapus terlalu banyak sekaligus
+  const toRemove = stale.slice(0, 500);
+  for (const addr of toRemove) delete state.pools[addr];
+  if (toRemove.length > 0) console.log(`  [GC] removed ${toRemove.length} stale pools (${stale.length - toRemove.length} more eligible)`);
+
   return updated;
 }
 
@@ -455,7 +474,7 @@ const KNOWN_STABLES = new Set([
 ]);
 async function seedFromV4Registry() {
   if (!state.registrySeed) {
-    state.registrySeed = { cursor: 0, batchSize: 200, done: false };
+    state.registrySeed = { cursor: 0, batchSize: 50, done: false };
   }
   if (state.registrySeed.done) return { seeded: 0, remaining: 0 };
 
