@@ -273,8 +273,35 @@ async function checkV3(provider, entry, config) {
   const fee0 = realFees.amount0;
   const fee1 = realFees.amount1;
 
+  // Fetch token symbols + decimals (not hardcoded 18 / 'ETH')
+  let sym0 = '?', sym1 = '?', d0 = 18, d1 = 18;
+  if (entry.token0) {
+    try {
+      const c0 = new Contract(entry.token0, ERC20_ABI, provider);
+      const s = await c0.symbol().catch(() => null);
+      if (s) { sym0 = s; d0 = await c0.decimals().catch(() => 18); }
+    } catch {}
+  }
+  if (entry.token1) {
+    try {
+      const c1 = new Contract(entry.token1, ERC20_ABI, provider);
+      const s = await c1.symbol().catch(() => null);
+      if (s) { sym1 = s; d1 = await c1.decimals().catch(() => 18); }
+    } catch {}
+  }
+  if (sym0 !== '?' && sym1 !== '?') poolSymbol = `${sym0}/${sym1}`;
+
+  // Fee value in USD (like _reportV3 — uses actual decimals + USD prices)
+  let feeValueUsd = 0;
+  try {
+    const prices = await getTokenUsdPrices(entry.token0 || pos.token0, entry.token1 || pos.token1, currentTick, sqrtPriceX96, provider);
+    if (prices) {
+      feeValueUsd = Number(formatUnits(fee0, d0)) * (prices.token0Usd || 0)
+                  + Number(formatUnits(fee1, d1)) * (prices.token1Usd || 0);
+    }
+  } catch {}
+
   const ilPct = ilConcentrated(entryPrice, price, Number(pos.tickLower), Number(pos.tickUpper)) * 100;
-  const feeValueEth = Number(formatEther(fee1)) + Number(formatUnits(fee0, 18)) * price;
   const outOfRange = currentTick < Number(pos.tickLower) || currentTick > Number(pos.tickUpper);
   const threshold = Number(config.ilExitThresholdPct);
   const ilExceedsThreshold = ilPct < -threshold;
@@ -317,7 +344,8 @@ async function checkV3(provider, entry, config) {
     price,
     entryPrice,
     ilPct,
-    feeValueEth,
+    feeValueUsd,
+    sym0, sym1,
     entryValueUsd,
     currentValueUsd,
     netProfitPct,
@@ -622,7 +650,7 @@ async function monitorOnce(provider, config) {
 
       const rangePct = ((result.currentTick - result.tickLower) / (result.tickUpper - result.tickLower) * 100).toFixed(1);
       const statusIcon = result.outOfRange ? 'OUT' : 'IN';
-      console.log(`  V3 #${result.tokenId}: IL=${result.ilPct.toFixed(2)}% fee=${result.feeValueEth.toFixed(6)}ETH liq=${result.liquidity.slice(0,8)} range=${rangePct}% [${statusIcon}]`);
+      console.log(`  V3 #${result.tokenId}: IL=${result.ilPct.toFixed(2)}% fee=$${result.feeValueUsd.toFixed(2)} pool=${result.pool} liq=${result.liquidity.slice(0,8)} range=${rangePct}% [${statusIcon}]`);
 
       // Suppress generic notify if auto-close already sent its own message
       if (result.autoClosed || result.autoCloseFailed) {
@@ -631,7 +659,7 @@ async function monitorOnce(provider, config) {
         const parts = [
           `\u{1F514} LP Monitor: ${result.pool} #${result.tokenId}`,
           `IL: ${result.ilPct.toFixed(2)}% (threshold: -${config.ilExitThresholdPct}%)`,
-          `Fees earned: ${result.feeValueEth.toFixed(6)} ETH`,
+          `Fees earned: \$${result.feeValueUsd.toFixed(2)}`,
           `Entry: ${result.entryPrice.toFixed(8)} | Now: ${result.price.toFixed(8)}`,
         ];
         if (result.outOfRange) parts.push('\u{26A0}\u{FE0F} OUT OF RANGE');
