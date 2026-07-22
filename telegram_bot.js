@@ -11,11 +11,11 @@ const SCREENER_STATE = new URL('./screener_state.json', import.meta.url);
 const CONFIG_JSON = new URL('./user-config.json', import.meta.url);
 
 const CONFIG_KEYS = {
-  maxActivePositions: { path: ['lp', 'maxActivePositions'], label: 'maxActivePositions' },
-  positionSizeEth: { path: ['lp', 'positionSizeEth'], label: 'positionSizeEth' },
-  takeProfitArmPct: { path: ['lp', 'takeProfitArmPct'], label: 'takeProfitArmPct' },
-  ilExitThresholdPct: { path: ['lp', 'ilExitThresholdPct'], label: 'ilExitThresholdPct' },
-  swapRatioPct: { path: ['lp', 'swapRatioPct'], label: 'swapRatioPct' },
+  maxActivePositions: { path: ['lp', 'maxActivePositions'], label: 'maxActivePositions', restart: 'lp-screener' },
+  positionSizeEth: { path: ['lp', 'positionSizeEth'], label: 'positionSizeEth', restart: 'lp-screener' },
+  swapRatioPct: { path: ['lp', 'swapRatioPct'], label: 'swapRatioPct', restart: 'lp-screener' },
+  takeProfitArmPct: { path: ['lp', 'takeProfitArmPct'], label: 'takeProfitArmPct', restart: 'lp-monitor' },
+  ilExitThresholdPct: { path: ['lp', 'ilExitThresholdPct'], label: 'ilExitThresholdPct', restart: 'lp-monitor' },
 };
 
 let lastUpdateId = 0;
@@ -157,7 +157,7 @@ async function cmdSetKey(chatId, cmdName, rawVal, keyMeta, parseFn, validateMsg)
   saveConfig(cfg);
   await sendMsg(chatId,
     `✅ <b>${keyMeta.label}</b> diubah ke <b>${val}</b>\n\n` +
-    `⚠️ Restart bot diperlukan agar perubahan diterapkan:\n<code>pm2 restart robin-arb</code>\n\n` +
+    `⚠️ Restart ${keyMeta.restart} diperlukan:\n<code>pm2 restart ${keyMeta.restart}</code>\n\n` +
     `Ketik /config untuk verifikasi.`
   );
 }
