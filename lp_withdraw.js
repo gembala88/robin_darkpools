@@ -334,20 +334,40 @@ export async function swapBackAfterWithdraw(provider, wallet, tokens, config, fo
       console.log(`    Approve tx: ${appTx.hash}`);
     }
 
-    // Execute swap with the found fee tier
+    // Execute swap with the found fee tier (retry once with wider slippage if needed)
+    const swapSlippage = config.swapBackSlippagePct ?? config.slippagePct ?? 1;
+    const retrySlippage = config.swapBackRetrySlippagePct ?? 3;
     const router = new Contract(SWAP_ROUTER, [
       'function exactInputSingle((address,address,uint24,address,uint256,uint256,uint160)) payable returns (uint256)',
     ], wallet);
-    try {
-      const params = [token, WETH, fee, wallet.address, bal, amountOutMin, 0];
+
+    const doSwap = async (slippage, quoteOut, quoteFee, attemptLabel) => {
+      const minOut = quoteOut - (quoteOut * BigInt(slippage)) / 100n;
+      console.log(`    ${attemptLabel}: ${sym}→WETH slippage=${slippage}% min=${formatEther(minOut)}`);
+      const params = [token, WETH, quoteFee, wallet.address, bal, minOut, 0];
       const pop = await router.exactInputSingle.populateTransaction(params);
-      const r = await simulateAndSend(wallet, provider, pop, `${sym}→WETH`);
-      if (r.ok) swapped.push({ sym, token, amountIn: formatUnits(bal, dec), amountOutWeth: formatEther(amountOut), tx: r.tx });
-      else failed.push({ token, sym });
-    } catch (e) {
-      console.log(`    Swap FAILED: ${e.shortMessage || e.message}`);
-      failed.push({ token, sym });
+      return await simulateAndSend(wallet, provider, pop, `${sym}→WETH (${attemptLabel})`);
+    };
+
+    const reQuote = async () => {
+      for (const f of FEE_TIERS) {
+        try {
+          const result = await quoter.quoteExactInputSingle.staticCall([token, WETH, bal, f, 0]);
+          return { amountOut: result[0], fee: f };
+        } catch { /* try next */ }
+      }
+      return null;
+    };
+
+    let r = await doSwap(swapSlippage, amountOut, fee, 'attempt 1').catch(() => ({ ok: false }));
+    if (!r.ok && retrySlippage > swapSlippage) {
+      console.log(`    ⚠️ ${sym} swap gagal — re-quote + retry dengan slippage ${retrySlippage}%`);
+      const fresh = await reQuote();
+      if (fresh) { amountOut = fresh.amountOut; fee = fresh.fee; }
+      r = await doSwap(retrySlippage, amountOut, fee, 'attempt 2').catch(() => ({ ok: false }));
     }
+    if (r.ok) swapped.push({ sym, token, amountIn: formatUnits(bal, dec), amountOutWeth: formatEther(amountOut), tx: r.tx });
+    else failed.push({ token, sym });
   }
 
   // Unwrap WETH → ETH

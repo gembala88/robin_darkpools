@@ -148,6 +148,10 @@
     "pumpGuardMinAgeHours": 24,
     "pumpGuardMaxVolTvlRatio": 15,
     "pumpGuardMaxPriceChangePct": 500,
+    "--- LP SWAP-BACK ---": "Token→WETH swap-back on position close",
+    "swapBackSlippagePct": 1,
+    "swapBackRetrySlippagePct": 3,
+
     "--- LP FAST-TRACK ---": "New pool watcher (bypasses backlog, checks recent blocks every N ms)",
     "fastTrackEnabled": true,
     "fastTrackIntervalMs": 120000,
