@@ -1,11 +1,14 @@
 import 'dotenv/config';
 import fs from 'node:fs';
-import { Contract, id as topicId, getAddress, AbiCoder } from 'ethers';
+import { Contract, Wallet, id as topicId, getAddress, AbiCoder } from 'ethers';
 import { UC } from './config.js';
 import { tgScreener } from './telegram.js';
 import { checkGMGN } from './gmgn.js';
 import { makeProvider } from './provider.js';
-import { autoOpenExecute, checkAutoOpenConditions, enrichPoolData, recordTrendSnapshot } from './lp_auto_open.js';
+import { autoOpenExecute, checkAutoOpenConditions, enrichPoolData, recordTrendSnapshot, computeTrend } from './lp_auto_open.js';
+import { loadState as loadLpState, saveState as saveLpState } from './lp_deposit.js';
+import { withdrawV3, withdrawV4 } from './lp_withdraw.js';
+import { V3 } from './config.js';
 import { scanV4Pools } from './v4_pool_scanner.js';
 
 const DEXSCREENER_PROFILES = 'https://api.dexscreener.com/token-profiles/latest/v1';
@@ -1066,12 +1069,142 @@ function loadState() {
     console.log(`[DEBUG COOLDOWN INIT] autoOpenCooldown loaded from disk: ${Object.keys(state.autoOpenCooldown).length} entries: ${JSON.stringify(state.autoOpenCooldown)}`);
   }
   if (!state._seenSymbolAddresses) state._seenSymbolAddresses = {};
+  if (!state.lastReplaceAt) state.lastReplaceAt = 0;
 }
 
 function saveState() {
   const tmp = STATE_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
   fs.renameSync(tmp, STATE_FILE);
+}
+
+// ===== REPLACE WEAKEST POSITION =====
+async function tryReplaceWeakest(newPo) {
+  const cooldownMin = cfgLp('replaceWeakestCooldownMin') || 60;
+  if (state.lastReplaceAt && Date.now() - state.lastReplaceAt < cooldownMin * 60000) {
+    console.log(`  [replace] cooldown ${Math.ceil((Date.now() - state.lastReplaceAt) / 60000)}min < ${cooldownMin}min — skip`);
+    return false;
+  }
+
+  const lpState = loadLpState();
+  const positions = (lpState.positions || []).filter(p => p.dex === 'V3' || p.dex === 'V4');
+  const MAX = Number(process.env.MAX_LP_POSITIONS || UC('lp.maxActivePositions') || 3);
+  if (positions.length < MAX) {
+    console.log(`  [replace] positions ${positions.length} < ${MAX}, tidak perlu replace`);
+    return false;
+  }
+
+  const execProv = await (process.env.LP_EXEC_RPC_URL
+    ? makeProvider('LP_EXEC_RPC_URL')
+    : makeProvider('LP_SCREENER_RPC_URL')).catch(() => null);
+  if (!execProv) { console.log('  [replace] no provider'); return false; }
+
+  // Score setiap posisi aktif
+  const scored = [];
+  for (const pos of positions) {
+    let poolKey;
+    if (pos.dex === 'V3' && pos.token0 && pos.token1 && pos.fee != null) {
+      try {
+        const factory = new Contract(V3.factory, ['function getPool(address,address,uint24) view returns (address)'], execProv);
+        poolKey = (await factory.getPool(pos.token0, pos.token1, pos.fee)).toLowerCase();
+      } catch { continue; }
+    } else if (pos.dex === 'V4' && pos.poolId) {
+      poolKey = pos.poolId.toLowerCase();
+    } else continue;
+
+    const poolEntry = state.pools[poolKey];
+    if (!poolEntry || !poolEntry.score) continue;
+    const trend = computeTrend(poolEntry);
+    const priceChg = poolEntry.priceChange24h ?? 0;
+    const trendDir = trend.direction;
+    scored.push({ pos, score: poolEntry.score, priceChg, trendDir, poolEntry });
+  }
+
+  if (scored.length === 0) { console.log('  [replace] no positions can be scored'); return false; }
+
+  // Urut ascending (terlemah = score paling rendah)
+  scored.sort((a, b) => a.score - b.score);
+  const weakest = scored[0];
+  const newScore = newPo.score || 0;
+
+  console.log(`  [replace] weakest: #${weakest.pos.tokenId} score=${weakest.score} trend=${weakest.trendDir} priceChg=${weakest.priceChg}%`);
+
+  // Condition 1: margin >= 20
+  if (newScore < weakest.score + 20) {
+    console.log(`  [replace] SKIP: new ${newScore} < weakest ${weakest.score} + 20`);
+    return false;
+  }
+
+  // Condition 2: P&L negatif atau mendekati 0
+  if (weakest.priceChg > 5) {
+    console.log(`  [replace] SKIP: weakest P&L positif (priceChg=${weakest.priceChg}%) — sedang untung`);
+    return false;
+  }
+
+  // Condition 3: trend flat/turun
+  if (weakest.trendDir === 'up') {
+    console.log(`  [replace] SKIP: weakest trend masih UP — masih ada pertumbuhan`);
+    return false;
+  }
+
+  // Condition 4: cooldown (already checked above)
+
+  const wallet = process.env.AUTO_OPEN_DRY === '0' && process.env.PRIVATE_KEY
+    ? new Wallet(process.env.PRIVATE_KEY, execProv)
+    : null;
+
+  const symLabel = `${newPo.baseToken?.symbol || '?'}/${newPo.quoteToken?.symbol || '?'}`;
+  const pnlSign = weakest.priceChg >= 0 ? '+' : '';
+  const msg = `🔄 REPLACING #${weakest.pos.tokenId} (score ${weakest.score}, P&L ${pnlSign}${weakest.priceChg.toFixed(1)}%) dengan ${symLabel} (score ${newScore}) — slot penuh + kandidat jauh lebih baik`;
+
+  if (!wallet) {
+    console.log(`  [replace DRY] ${msg}`);
+    await tgScreener(`🔶 ${msg}`).catch(() => {});
+    return true;
+  }
+
+  // LIVE: tutup posisi terlemah
+  console.log(`  [replace] ${msg}`);
+  let closeOk = false;
+  try {
+    if (weakest.pos.dex === 'V3') {
+      const cfg = UC('lp');
+      const wd = await withdrawV3(execProv, wallet, BigInt(weakest.pos.tokenId), cfg);
+      closeOk = wd && !wd._burnFailed;
+    } else if (weakest.pos.dex === 'V4') {
+      const cfg = UC('lp');
+      const wd = await withdrawV4(execProv, wallet, cfg, weakest.pos.tokenId);
+      closeOk = wd && !wd._burnFailed;
+    }
+  } catch (e) {
+    console.log(`  [replace] close FAILED: ${e.shortMessage || e.message}`);
+    await tgScreener(`❌ REPLACE FAILED — close #${weakest.pos.tokenId}: ${e.shortMessage || e.message}`).catch(() => {});
+    return false;
+  }
+
+  if (!closeOk) {
+    console.log(`  [replace] close FAILED (unknown reason)`);
+    await tgScreener(`❌ REPLACE FAILED — close #${weakest.pos.tokenId}: unknown error`).catch(() => {});
+    return false;
+  }
+
+  // Hapus dari LP state (sudah ditutup)
+  const idx = (lpState.positions || []).findIndex(p => p.tokenId === weakest.pos.tokenId && p.dex === weakest.pos.dex);
+  if (idx !== -1) lpState.positions.splice(idx, 1);
+  saveLpState(lpState);
+
+  // Buka posisi baru
+  const result = await autoOpenExecute(newPo, execProv);
+  if (result) {
+    state.lastReplaceAt = Date.now();
+    saveState();
+    await tgScreener(`✅ ${msg}`).catch(() => {});
+    console.log(`  [replace] SUCCESS: closed #${weakest.pos.tokenId}, opened new position`);
+    return true;
+  } else {
+    await tgScreener(`⚠️ REPLACE PARTIAL: closed #${weakest.pos.tokenId} TAPI open baru GAGAL — slot kosong, next candidate`).catch(() => {});
+    return false;
+  }
 }
 
 // ===== EVALUATE + NOTIFY =====
@@ -1295,6 +1428,10 @@ async function evaluatePools() {
         }
       } else {
         console.log(`  [auto-open BLOCKED] ${sym}: ${ao.reason}`);
+        if (ao.reason && ao.reason.includes('max positions')) {
+          console.log(`  [replace] slots full — evaluating weakest replacement...`);
+          await tryReplaceWeakest(po);
+        }
       }
     }
     scored++;

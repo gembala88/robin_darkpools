@@ -80,6 +80,7 @@
     "slippagePct": 1,
     "deadlineSec": 1800,
     "ilExitThresholdPct": 20,
+    "oorNotifyMinIlChangePct": 5,
     "monitorIntervalMs": 25000,
     "maxConsecutiveFails": 3,
     "circuitBreakerCooldownMin": 30,

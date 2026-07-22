@@ -656,6 +656,19 @@ async function monitorOnce(provider, config) {
       if (result.autoClosed || result.autoCloseFailed) {
         if (result.autoClosed) toRemove.push(entry);
       } else if (result.shouldNotify) {
+        const notifyChg = Number(config.oorNotifyMinIlChangePct) || 5;
+        const oldOor = entry.lastNotifiedOOR;
+        entry.lastNotifiedOOR = result.outOfRange;
+        let edgeTrigger = false;
+        if (result.outOfRange && !oldOor) edgeTrigger = true;
+        if (result.ilExceedsThreshold) {
+          const ilBucket = Math.floor(result.ilPct / notifyChg) * notifyChg;
+          if (entry.lastNotifiedILBucket === undefined || ilBucket < entry.lastNotifiedILBucket) {
+            edgeTrigger = true;
+            entry.lastNotifiedILBucket = ilBucket;
+          }
+        }
+        if (!edgeTrigger) continue;
         const parts = [
           `\u{1F514} LP Monitor: ${result.pool} #${result.tokenId}`,
           `IL: ${result.ilPct.toFixed(2)}% (threshold: -${config.ilExitThresholdPct}%)`,
@@ -691,6 +704,19 @@ async function monitorOnce(provider, config) {
       if (result.autoClosed || result.autoCloseFailed) {
         if (result.autoClosed) toRemove.push(entry);
       } else if (result.shouldNotify) {
+        const notifyChg = Number(config.oorNotifyMinIlChangePct) || 5;
+        const oldOor = entry.lastNotifiedOOR;
+        entry.lastNotifiedOOR = result.outOfRange;
+        let edgeTrigger = false;
+        if (result.outOfRange && !oldOor) edgeTrigger = true;
+        if (result.ilExceedsThreshold) {
+          const ilBucket = Math.floor(result.ilPct / notifyChg) * notifyChg;
+          if (entry.lastNotifiedILBucket === undefined || ilBucket < entry.lastNotifiedILBucket) {
+            edgeTrigger = true;
+            entry.lastNotifiedILBucket = ilBucket;
+          }
+        }
+        if (!edgeTrigger) continue;
         const parts = [
           `\u{1F514} LP Monitor: ${result.pool} #${result.tokenId}`,
           `IL: ${result.ilPct.toFixed(2)}% (threshold: -${config.ilExitThresholdPct}%)`,
