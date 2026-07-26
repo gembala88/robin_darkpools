@@ -360,9 +360,19 @@ export async function checkAutoOpenConditions(po) {
   const pauseFile = path.join(process.cwd(), 'auto_open_paused.flag');
   if (fs.existsSync(pauseFile)) return { pass: false, reason: 'auto-open paused via /pause' };
 
-  // Gate 1: Growth trend (replaces score >= 60)
-  const trend = computeTrend(po);
-  if (trend.direction !== 'up') return { pass: false, reason: `trend ${trend.direction} (${trend.slopePct}%/cycle) — need UP` };
+  const mode = UC('strategyMode') || 'momentum';
+
+  // Gate 1: Trend (momentum) or Dip detect (dip-buy)
+  if (mode === 'dip-buy') {
+    const pct = po.priceChange24h;
+    const minPct = UC('lp.dipDetectMinPct') ?? -50;
+    const maxPct = UC('lp.dipDetectMaxPct') ?? -40;
+    if (pct == null) return { pass: false, reason: `priceChange24h tidak tersedia` };
+    if (pct < minPct || pct > maxPct) return { pass: false, reason: `price change ${pct >= 0 ? '+' : ''}${pct}% di luar rentang dip ${minPct}% s/d ${maxPct}%` };
+  } else {
+    const trend = computeTrend(po);
+    if (trend.direction !== 'up') return { pass: false, reason: `trend ${trend.direction} (${trend.slopePct}%/cycle) — need UP` };
+  }
   if ((po.score || 0) < 5) return { pass: false, reason: `score ${po.score} < 5` };
 
   // Gate 2: HHI done and < 9500
@@ -376,9 +386,10 @@ export async function checkAutoOpenConditions(po) {
   if (!po.gmgnChecked) return { pass: false, reason: 'GMGN not checked' };
   if (po.gmgnFlags && po.gmgnFlags.length > 0) return { pass: false, reason: `GMGN flagged: ${po.gmgnFlags.join(', ')}` };
 
-  // Gate 4: TVL range ($2k – $70k)
-  const maxTvl = UC('lp.tvlUsdGateMax') || 70000;
-  if ((po.tvlUsd || 0) < 2000) return { pass: false, reason: `TVL $${(po.tvlUsd || 0).toLocaleString()} < $2k` };
+  // Gate 4: TVL range (from config)
+  const minTvl = UC('lp.tvlUsdGateMin') || 15000;
+  const maxTvl = UC('lp.tvlUsdGateMax') || 1000000;
+  if ((po.tvlUsd || 0) < minTvl) return { pass: false, reason: `TVL $${(po.tvlUsd || 0).toLocaleString()} < $${minTvl.toLocaleString()}` };
   if ((po.tvlUsd || 0) > maxTvl) return { pass: false, reason: `TVL $${(po.tvlUsd || 0).toLocaleString()} > $${maxTvl.toLocaleString()}, terlalu besar/mapan` };
 
   // Gate 5: Governance
@@ -410,7 +421,10 @@ export async function autoOpenDryRun(po, provider) {
     try { dexType = await detectPoolType(po.pairAddress, provider); } catch {}
   }
   const sym = `${b?.symbol || '?'}/${q?.symbol || '?'} (${dexType})`;
-  const trend = computeTrend(po);
+  const mode = UC('strategyMode') || 'momentum';
+  const trendInfo = mode === 'dip-buy'
+    ? `📉 Dip: ${po.priceChange24h != null ? (po.priceChange24h >= 0 ? '+' : '') + po.priceChange24h + '%' : 'N/A'} (dip-buy mode)`
+    : `📈 Trend: ${(computeTrend(po)).direction === 'up' ? 'RISING' : 'DECLINING/FLAT'} (${(computeTrend(po)).slopePct}%/cycle)`;
 
   const msg = [
     `⚡ <b>AUTO-OPEN (DRY)</b> — ${sym}`,
@@ -420,7 +434,7 @@ export async function autoOpenDryRun(po, provider) {
     ``,
     `🏅 Score: ${po.score}/100`,
     `💰 TVL: $${(po.tvlUsd || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`,
-    `📈 Trend: ${trend.direction === 'up' ? 'RISING' : trend.direction === 'down' ? 'DECLINING' : 'FLAT'} (${trend.slopePct}%/cycle)`,
+    trendInfo,
     `📊 HHI: ${po.hhiData?.hhi}`,
     `✅ GMGN: clean`,
     `✅ Governance: OK`,
@@ -429,7 +443,7 @@ export async function autoOpenDryRun(po, provider) {
   ].join('\n');
 
   console.log(`\n>>> AUTO-OPEN (DRY): ${sym}`);
-  console.log(`    pool=${po.pairAddress}  score=${po.score}  tvl=$${(po.tvlUsd || 0).toLocaleString()}  hhi=${po.hhiData?.hhi}  trend=${trend.direction}(${trend.slopePct}%/cyc)  gmgn=clean  gov=OK`);
+  console.log(`    pool=${po.pairAddress}  score=${po.score}  tvl=$${(po.tvlUsd || 0).toLocaleString()}  hhi=${po.hhiData?.hhi}  gmgn=clean  gov=OK  mode=${mode}`);
 
   await tgScreener(msg).catch(() => {});
 }
@@ -705,17 +719,19 @@ export async function autoOpenExecute(po, provider) {
   }
 
   // Success notification
+  const mode = UC('strategyMode') || 'momentum';
   const msg = [
     `✅ <b>AUTO-OPEN SUCCESS</b> — ${sym}`,
     ``,
     `Token: <code>${b?.address || '?'}</code>`,
+    `CA: <code>${po.baseToken?.address || '?'}</code>`,
     `Pool: <code>${po.pairAddress}</code>`,
     `DEX: ${position.dex}`,
     `Token ID: <code>${position.tokenId}</code>`,
     `Tx: <code>${position.tx}</code>`,
     ``,
     `💰 Amount: ${formatEther(amountEth)} ETH`,
-    `📊 Score: ${po.score}/100 | Trend: rising`,
+    `📊 Score: ${po.score}/100 | Mode: ${mode}`,
   ].join('\n');
 
   console.log(`\n✅ AUTO-OPEN SUCCESS: ${sym} — tokenId=${position.tokenId} tx=${position.tx}`);

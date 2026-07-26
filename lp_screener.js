@@ -1304,6 +1304,18 @@ async function evaluatePools() {
   let scored = 0, passed = 0, notified = 0;
   const entries = Object.entries(state.pools);
 
+  // ===== DIAGNOSTIK: dip-buy mode candidates (setiap siklus) =====
+  const mode = UC('strategyMode') || 'momentum';
+  if (mode === 'dip-buy') {
+    const minPct = cfgLp('dipDetectMinPct') ?? -50;
+    const maxPct = cfgLp('dipDetectMaxPct') ?? -40;
+    let dipCount = 0;
+    for (const [, po] of entries) {
+      if (po.priceChange24h != null && po.priceChange24h >= minPct && po.priceChange24h <= maxPct) dipCount++;
+    }
+    if (dipCount > 0) console.log(`  [dip-detect] ${dipCount} pool dengan priceChange24h antara ${minPct}% s/d ${maxPct}% — mode=${mode}`);
+  }
+
   // ===== DIAGNOSTIK: duplicate token per symbol (per 30 menit) =====
   if (Date.now() - (_lastTokenDiag || 0) > 1800000) {
     _lastTokenDiag = Date.now();
@@ -1449,7 +1461,9 @@ async function evaluatePools() {
     } else {
       const ao = await checkAutoOpenConditions(po);
       if (ao.pass) {
-        // Fix 2: Symbol collision warning — address baru untuk symbol yang sudah pernah dibuka
+        // Fix 2: Symbol collision — di mode dip-buy, BLOKIR KERAS (bukan cuma warning)
+        let collisionBlock = false;
+        const mode = UC('strategyMode') || 'momentum';
         if (po.baseToken?.symbol && po.baseToken?.address) {
           const symKey = po.baseToken.symbol.toUpperCase();
           const seenAddrs = state._seenSymbolAddresses?.[symKey];
@@ -1461,12 +1475,16 @@ async function evaluatePools() {
               await tgScreener(
                 `⚠️ <b>SYMBOL COLLISION</b>\n` +
                 `<code>${symKey}</code> alamat BARU:\n<code>${po.baseToken.address}</code>\n` +
-                `Berbeda dari yang pernah dibuka:\n<code>${known}</code>\n` +
-                `Kemungkinan token tiruan — investigasi manual diperlukan.`
+                `Berbeda dari yang pernah dibuka:\n<code>${known}</code>`
               ).catch(() => {});
+              if (mode === 'dip-buy') {
+                console.log(`  [SYMBOL COLLISION] mode=dip-buy — BLOKIR auto-open (token tiruan berbahaya untuk strategi ini)`);
+                collisionBlock = true;
+              }
             }
           }
         }
+        if (collisionBlock) continue;
 
         const execProv = await (process.env.LP_EXEC_RPC_URL
           ? makeProvider('LP_EXEC_RPC_URL')
