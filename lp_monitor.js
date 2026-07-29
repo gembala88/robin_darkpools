@@ -7,6 +7,8 @@ import { V3_NFPM_ABI, ERC20_ABI } from './abis.js';
 import { UC } from './config.js';
 import { tg } from './telegram.js';
 import { withdrawV3, withdrawV4, swapBackAfterWithdraw } from './lp_withdraw.js';
+import { enrichPoolData, genericSwap, genericDeposit, detectPoolType } from './lp_auto_open.js';
+import { computeTickRange, computeSingleSideWethRange } from './lp_deposit.js';
 import { getSqrtRatioAtTick, getAmountsForLiquidity, getEthUsdPrice, getTokenUsdPricesFromTick } from './v3_math.js';
 
 const abi = AbiCoder.defaultAbiCoder();
@@ -679,6 +681,11 @@ async function monitorOnce(provider, config) {
         if (result.ilExceedsThreshold) parts.push('\u{26A0}\u{FE0F} IL exceeds threshold');
         await tg(parts.join('\n')).catch(() => {});
       }
+
+      // Auto-rebalance: OOR ringan (belum mencapai SL)
+      if (!result.autoClosed && !result.autoCloseFailed && result.shouldNotify) {
+        await tryRebalance(entry, result, provider);
+      }
     } else if (entry.dex === 'V4') {
       const result = await checkV4(provider, entry, config);
       if (!result || result.error) {
@@ -725,6 +732,11 @@ async function monitorOnce(provider, config) {
         if (result.outOfRange) parts.push(`\u{26A0}\u{FE0F} OUT OF RANGE`);
         if (result.ilExceedsThreshold) parts.push(`\u{26A0}\u{FE0F} IL exceeds threshold`);
         await tg(parts.join('\n')).catch(() => {});
+      }
+
+      // Auto-rebalance: OOR ringan V4
+      if (!result.autoClosed && !result.autoCloseFailed && result.shouldNotify) {
+        await tryRebalance(entry, result, provider);
       }
     }
   }
@@ -930,6 +942,149 @@ async function _reportV4(provider, entry) {
     `Fees: $0.00 (V4)`,
     `TP: ${tpStr}`,
   ].join('\n'));
+}
+
+// ===== AUTO-REBALANCE (re-center OOR position tanpa trigger SL) =====
+async function tryRebalance(entry, result, provider) {
+  const config = UC('lp');
+  if (!config.enableAutoRebalance) return false;
+
+  if (!result.outOfRange) {
+    if (entry._rebalanceOorSince) { delete entry._rebalanceOorSince; console.log(`  [rebalance] #${entry.tokenId} kembali IN RANGE — reset`); }
+    return false;
+  }
+
+  const threshold = Number(config.ilExitThresholdPct) || 40;
+  const ilSafeLimit = -(threshold * 0.5);
+  if (result.ilPct <= ilSafeLimit) {
+    console.log(`  [rebalance] #${entry.tokenId}: IL ${result.ilPct.toFixed(2)}% <= ${ilSafeLimit}% (50% threshold) — terlalu dekat SL`);
+    return false;
+  }
+
+  if (!entry._rebalanceOorSince) {
+    entry._rebalanceOorSince = Date.now();
+    console.log(`  [rebalance] #${entry.tokenId}: first OOR — rebalance after ${config.rebalanceMinOorMinutes || 10}min sustained`);
+    return false;
+  }
+
+  const minOorMin = Number(config.rebalanceMinOorMinutes) || 10;
+  const oorDuration = (Date.now() - entry._rebalanceOorSince) / 60000;
+  if (oorDuration < minOorMin) {
+    console.log(`  [rebalance] #${entry.tokenId}: OOR ${oorDuration.toFixed(1)}min < ${minOorMin}min — waiting`);
+    return false;
+  }
+
+  const cdHours = Number(config.rebalanceCooldownHours) || 2;
+  if (entry._lastRebalanceAt) {
+    const elapsed = (Date.now() - entry._lastRebalanceAt) / 3600000;
+    if (elapsed < cdHours) {
+      console.log(`  [rebalance] #${entry.tokenId}: cooldown ${elapsed.toFixed(1)}h < ${cdHours}h — skip`);
+      return false;
+    }
+  }
+
+  // ── EXECUTE ──
+  const execProv = await (process.env.LP_EXEC_RPC_URL
+    ? makeProvider('LP_EXEC_RPC_URL')
+    : makeProvider('LP_MONITOR_RPC_URL')).catch(() => null);
+  if (!execProv) { console.log('  [rebalance] no provider'); return false; }
+
+  const wallet = AUTO_CLOSE_DRY || !process.env.PRIVATE_KEY ? null : new Wallet(process.env.PRIVATE_KEY, execProv);
+  const posSizeEth = UC('lp.positionSizeEth') || 0.01;
+  const amountEth = parseEther(String(posSizeEth));
+  const symLabel = `${result.pool || '?'}`;
+  const rangeOld = `[${entry.tickLower}, ${entry.tickUpper}]`;
+  const mode = config.depositMode || 'in-range';
+  const tickSpacing = entry.tickSpacing || 60; // fallback
+
+  const newTickRange = mode === 'single-side-eth' && entry.token0 && entry.token1
+    ? computeSingleSideWethRange(result.currentTick, Number(config.rangeSymmetricPct) || 30, tickSpacing, entry.token0, entry.token1, '0x0bd7d308f8e1639fab988df18a8011f41eacad73')
+    : computeTickRange(result.currentTick, Number(config.rangeSymmetricPct) || 30, tickSpacing);
+  const rangeNew = `[${newTickRange.tickLower}, ${newTickRange.tickUpper}]`;
+
+  const msg = `🔄 AUTO-REBALANCE #${entry.tokenId}: range lama ${rangeOld} -> range baru ${rangeNew}, harga sekarang tick=${result.currentTick}, IL sebelum=${result.ilPct.toFixed(2)}%`;
+
+  if (!wallet) {
+    console.log(`  [rebalance DRY] ${msg}`);
+    await tg(msg).catch(() => {});
+    entry._lastRebalanceAt = Date.now();
+    return true;
+  }
+
+  console.log(`  [rebalance] ${msg}`);
+
+  // Step 1: Tutup posisi lama
+  let closeOk = false;
+  try {
+    if (entry.dex === 'V3') {
+      const wd = await withdrawV3(execProv, wallet, BigInt(entry.tokenId), config);
+      closeOk = wd && !wd._burnFailed;
+    } else if (entry.dex === 'V4') {
+      const wd = await withdrawV4(execProv, wallet, config, entry.tokenId);
+      closeOk = wd && !wd._burnFailed;
+    }
+  } catch (e) {
+    console.log(`  [rebalance] close FAILED: ${e.shortMessage || e.message}`);
+    await tg(`❌ AUTO-REBALANCE FAILED — close #${entry.tokenId}: ${e.shortMessage || e.message}`).catch(() => {});
+    return false;
+  }
+
+  if (!closeOk) {
+    console.log(`  [rebalance] close FAILED (unknown)`);
+    await tg(`❌ AUTO-REBALANCE FAILED — close #${entry.tokenId}: unknown error`).catch(() => {});
+    return false;
+  }
+
+  // Step 2: Dapatkan poolAddr dari posisi
+  let poolAddr;
+  try {
+    if (entry.dex === 'V3' && entry.token0 && entry.token1 && entry.fee != null) {
+      poolAddr = await getV3PoolAddress(execProv, entry.token0, entry.token1, entry.fee);
+    } else if (entry.dex === 'V4' && entry.poolId) {
+      poolAddr = '0x' + entry.poolId.slice(2, 42).toLowerCase();
+    } else {
+      console.log('  [rebalance] cannot determine pool address');
+      await tg(`⚠️ AUTO-REBALANCE PARTIAL: closed #${entry.tokenId} TAPI pool address tidak dikenal`).catch(() => {});
+      return false;
+    }
+  } catch (e) {
+    console.log(`  [rebalance] pool lookup FAILED: ${e.shortMessage || e.message}`);
+    await tg(`⚠️ AUTO-REBALANCE PARTIAL: closed #${entry.tokenId} TAPI pool lookup gagal`).catch(() => {});
+    return false;
+  }
+
+  // Step 3: Enrich pool data untuk deposit
+  const poolLike = { pairAddress: poolAddr, baseToken: { address: entry.token0 }, quoteToken: { address: entry.token1 } };
+  const poolInfo = await enrichPoolData(poolLike, execProv);
+  if (!poolInfo) {
+    console.log('  [rebalance] enrichPoolData failed');
+    await tg(`⚠️ AUTO-REBALANCE PARTIAL: closed #${entry.tokenId} TAPI pool enrichment gagal`).catch(() => {});
+    return false;
+  }
+
+  // Override range dengan yang baru dihitung
+  poolInfo.tickLower = newTickRange.tickLower;
+  poolInfo.tickUpper = newTickRange.tickUpper;
+
+  // Step 4: Swap + Deposit dengan range baru
+  const swapResult = await genericSwap(poolInfo, amountEth, execProv, wallet, config);
+  if (!swapResult) {
+    console.log('  [rebalance] swap failed setelah close');
+    await tg(`⚠️ AUTO-REBALANCE PARTIAL: closed #${entry.tokenId} TAPI swap gagal — dana di wallet, next cycle`).catch(() => {});
+    return false;
+  }
+
+  const position = await genericDeposit(poolInfo, amountEth, execProv, wallet, config);
+  if (!position) {
+    console.log('  [rebalance] deposit failed setelah swap');
+    await tg(`⚠️ AUTO-REBALANCE PARTIAL: closed #${entry.tokenId} TAPI deposit gagal — dana di wallet, next cycle`).catch(() => {});
+    return false;
+  }
+
+  entry._lastRebalanceAt = Date.now();
+  await tg(`✅ ${msg}\n→ Token ID baru: <code>${position.tokenId}</code>`).catch(() => {});
+  console.log(`  [rebalance] SUCCESS: #${entry.tokenId} -> #${position.tokenId}`);
+  return true;
 }
 
 async function main() {
