@@ -21,8 +21,8 @@ function loadState() {
 }
 
 // ===== V3 WITHDRAW =====
-export async function withdrawV3(provider, wallet, tokenId, config) {
-  console.log(`\n=== V3 Withdraw tokenId=${tokenId} ===`);
+export async function withdrawV3(provider, wallet, tokenId, config, skipSwapBack = false) {
+  console.log(`\n=== V3 Withdraw tokenId=${tokenId} ===${skipSwapBack ? ' (skipSwapBack=true — NO swap-back, token apa adanya di wallet)' : ''}`);
 
   const nfpm = new Contract(V3.nfpm, V3_NFPM_ABI, wallet || provider);
 
@@ -178,8 +178,9 @@ export async function withdrawV3(provider, wallet, tokenId, config) {
 
 // ===== V4 WITHDRAW =====
 // tokenId optional: if null, looks up from state or V4_TOKEN_ID env.
-export async function withdrawV4(provider, wallet, config, tokenId = null) {
-  console.log(`\n=== V4 Withdraw ===`);
+// skipSwapBack=true: KIRIM ke rebalance — lewati swap-back internal (biarkan token apa adanya).
+export async function withdrawV4(provider, wallet, config, tokenId = null, skipSwapBack = false) {
+  console.log(`\n=== V4 Withdraw ===${skipSwapBack ? ' (skipSwapBack=true — NO swap-back, token apa adanya di wallet)' : ''}`);
   if (!config.enableV4CashcatUsdg) { console.log('  SKIPPED (disabled)'); return; }
 
   if (tokenId === null) {

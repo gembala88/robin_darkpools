@@ -765,18 +765,41 @@ async function monitorOnce(provider, config) {
 // ===== PERIODIC POSITION REPORT (every 5 minutes) =====
 // Sends a Telegram notification for each active position with current metrics.
 // Skips silently if no positions active. Read-only — does not modify state.
+function formatLpDuration(ts) {
+  if (!ts || typeof ts !== 'number' || ts <= 0) return 'unknown';
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  if (mins < 0) return 'just now';
+  const days = Math.floor(mins / 1440);
+  const hrs = Math.floor((mins % 1440) / 60);
+  const m = mins % 60;
+  if (days > 0) return `${days}d ${hrs}h`;
+  if (hrs > 0) return `${hrs}h ${m}m`;
+  return `${m}m`;
+}
+
 async function sendPeriodicReport(provider) {
   const state = loadState();
   if (!state.positions?.length) return;
 
+  const sections = [];
   for (const entry of state.positions) {
+    let section = null;
     try {
-      if (entry.dex === 'V3') await _reportV3(provider, entry);
-      else if (entry.dex === 'V4') await _reportV4(provider, entry);
+      if (entry.dex === 'V3') section = await _reportV3(provider, entry);
+      else if (entry.dex === 'V4') section = await _reportV4(provider, entry);
     } catch (e) {
       console.error(`Periodic report error #${entry.tokenId}: ${e.shortMessage || e.message}`);
     }
+    if (section) sections.push(section);
   }
+
+  if (!sections.length) return;
+
+  await tg([
+    `📊 Position Report (${sections.length} aktif)`,
+    '',
+    sections.join('\n\n---\n\n'),
+  ].join('\n'));
 }
 
 async function _reportV3(provider, entry) {
@@ -852,13 +875,13 @@ async function _reportV3(provider, entry) {
     }
   }
 
-  await tg([
-    `📊 Position Update #${entry.tokenId} (${pairLabel})`,
+  const durStr = formatLpDuration(entry.ts);
+  return [
+    `#${entry.tokenId} (${pairLabel}) — ${durStr}`,
     `Status: ${statusStr}`,
     `IL: ${ilPct >= 0 ? '+' : ''}${ilPct.toFixed(2)}% | Net P&L: ${netProfitStr}`,
-    `Fees: ${feeStr}`,
-    `TP: ${tpStr}`,
-  ].join('\n'));
+    `Fees: ${feeStr} | TP: ${tpStr}`,
+  ].join('\n');
 }
 
 async function _reportV4(provider, entry) {
@@ -935,13 +958,13 @@ async function _reportV4(provider, entry) {
     }
   }
 
-  await tg([
-    `📊 Position Update #${entry.tokenId} (${pairLabel})`,
+  const durStr = formatLpDuration(entry.ts);
+  return [
+    `#${entry.tokenId} (${pairLabel}) — ${durStr}`,
     `Status: ${statusStr}`,
     `IL: ${ilPct >= 0 ? '+' : ''}${ilPct.toFixed(2)}% | Net P&L: ${netProfitStr}`,
-    `Fees: $0.00 (V4)`,
-    `TP: ${tpStr}`,
-  ].join('\n'));
+    `Fees: $0.00 (V4) | TP: ${tpStr}`,
+  ].join('\n');
 }
 
 // ===== AUTO-REBALANCE (re-center OOR position tanpa trigger SL) =====
@@ -1043,14 +1066,16 @@ async function tryRebalance(entry, result, provider) {
 
   console.log(`  [rebalance] ${msg}`);
 
-  // Step 1: Tutup posisi lama
+  // Step 1: Tutup posisi lama — skipSwapBack=true KHUSUS untuk rebalance:
+  // jangan swap-back di dalam withdraw, biarkan token apa adanya di wallet
+  // supaya Step 4 bisa baca komposisi ASLI (sebelum keputusan swap).
   let closeOk = false;
   try {
     if (entry.dex === 'V3') {
-      const wd = await withdrawV3(execProv, wallet, BigInt(entry.tokenId), config);
+      const wd = await withdrawV3(execProv, wallet, BigInt(entry.tokenId), config, true);
       closeOk = wd && !wd._burnFailed;
     } else if (entry.dex === 'V4') {
-      const wd = await withdrawV4(execProv, wallet, config, entry.tokenId);
+      const wd = await withdrawV4(execProv, wallet, config, entry.tokenId, true);
       closeOk = wd && !wd._burnFailed;
     }
   } catch (e) {
