@@ -181,6 +181,28 @@ export function computeSingleSideWethRange(currentTick, symmetricPct, tickSpacin
   return { tickLower: tickUpper - rangeWidth, tickUpper };
 }
 
+// Compute tick range for single-side-token (auto-rebalance) mode.
+// Mirror of computeSingleSideWethRange — position so 100% of liquidity is TOKEN:
+//   - If token0=TOKEN: range ABOVE current tick (tickLower > currentTick)
+//   - If token1=TOKEN: range BELOW current tick (tickUpper < currentTick)
+// Modal tetap 100% TOKEN sampai harga masuk range, baru mulai convert ke WETH.
+export function computeSingleSideTokenRange(currentTick, symmetricPct, tickSpacing, token0, token1, tokenAddr) {
+  const halfRangeTicks = Math.floor(Math.log(1 + symmetricPct / 100) / Math.log(1.0001));
+  const halfRangeAligned = Math.ceil(halfRangeTicks / tickSpacing) * tickSpacing;
+  const rangeWidth = halfRangeAligned * 2;
+
+  if (token0.toLowerCase() === tokenAddr.toLowerCase()) {
+    // TOKEN is token0 → range ABOVE current → 100% token0 below range
+    const alignedCurrent = Math.floor(currentTick / tickSpacing) * tickSpacing;
+    const tickLower = alignedCurrent + tickSpacing;
+    return { tickLower, tickUpper: tickLower + rangeWidth };
+  }
+  // TOKEN is token1 → range BELOW current → 100% token1 above range
+  const alignedCurrent = Math.ceil(currentTick / tickSpacing) * tickSpacing;
+  const tickUpper = alignedCurrent - tickSpacing;
+  return { tickLower: tickUpper - rangeWidth, tickUpper };
+}
+
 // Two-sided liquidity: min(L0, L1) using standard V3 formula.
 // amount0 = CASHCAT, amount1 = WETH.
 export function computeLiquidity(amount0, amount1, sqrtPriceX96, currentTick, tickLower, tickUpper) {
@@ -268,6 +290,13 @@ export async function depositV3(provider, wallet, config, poolInfo = null) {
     tickLower = r.tickLower;
     tickUpper = r.tickUpper;
     console.log(`  DEPOSIT MODE: single-side-eth (100% ${wethLabel} until price enters range)`);
+  } else if (depositMode === 'single-side-token') {
+    const tokenAddr = config?.singleSideToken || (token0.toLowerCase() === WETH.toLowerCase() ? token1 : token0);
+    const tokenLabel = tokenAddr.toLowerCase() === token0.toLowerCase() ? symbol.split('/')[0] : symbol.split('/')[1];
+    const r = computeSingleSideTokenRange(currentTick, symmetricPct, tickSpacing, token0, token1, tokenAddr);
+    tickLower = r.tickLower;
+    tickUpper = r.tickUpper;
+    console.log(`  DEPOSIT MODE: single-side-token (100% ${tokenLabel} until price enters range)`);
   } else {
     const r = computeTickRange(currentTick, symmetricPct, tickSpacing);
     tickLower = r.tickLower;
@@ -302,6 +331,17 @@ export async function depositV3(provider, wallet, config, poolInfo = null) {
     // Determine which token is WETH (the one with non-zero balance)
     const wethIsToken0 = token0.toLowerCase() === WETH.toLowerCase();
     if (wethIsToken0) {
+      implied1 = 0n;
+    } else {
+      implied0 = 0n;
+    }
+  } else if (depositMode === 'single-side-token') {
+    // Mirror of single-side-eth: only the TOKEN side is used.
+    const tokenAddr = config?.singleSideToken || (token0.toLowerCase() === WETH.toLowerCase() ? token1 : token0);
+    const tokenIsToken0 = tokenAddr.toLowerCase() === token0.toLowerCase();
+    const label = tokenIsToken0 ? symbol.split('/')[0] : symbol.split('/')[1];
+    console.log(`  Mode single-side-token: only ${label} side will be used`);
+    if (tokenIsToken0) {
       implied1 = 0n;
     } else {
       implied0 = 0n;
@@ -435,6 +475,13 @@ export async function depositV4(provider, wallet, config, poolInfo = null) {
     tickLower = r.tickLower;
     tickUpper = r.tickUpper;
     console.log(`  DEPOSIT MODE: single-side-eth (100% ${wethLabel} until price enters range)`);
+  } else if (depositMode === 'single-side-token') {
+    const tokenAddr = config?.singleSideToken || (token0.toLowerCase() === WETH.toLowerCase() ? token1 : token0);
+    const tokenLabel = tokenAddr.toLowerCase() === token0.toLowerCase() ? symbol.split('/')[0] : symbol.split('/')[1];
+    const r = computeSingleSideTokenRange(currentTick, config.rangeSymmetricPct, tickSpacing, token0, token1, tokenAddr);
+    tickLower = r.tickLower;
+    tickUpper = r.tickUpper;
+    console.log(`  DEPOSIT MODE: single-side-token (100% ${tokenLabel} until price enters range)`);
   } else {
     const r = computeTickRange(currentTick, config.rangeSymmetricPct, tickSpacing);
     tickLower = r.tickLower;
@@ -473,21 +520,33 @@ export async function depositV4(provider, wallet, config, poolInfo = null) {
   } else {
     sqrtPaX96 = sqrtPriceAtTick(tickLower, currentTick, sqrtPriceX96);
     sqrtPbX96 = sqrtPriceAtTick(tickUpper, currentTick, sqrtPriceX96);
-    const L0 = bal0 * sqrtPriceX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPriceX96) * Q96);
-    const L1 = bal1 * Q96 / (sqrtPriceX96 - sqrtPaX96);
-    liquidity = L0 < L1 ? L0 : L1;
-    const bindingSide = L0 < L1 ? symbol.split('/')[0] : symbol.split('/')[1];
-    let expected0 = bal0, expected1 = bal1;
-    if (liquidity === L0) {
-      expected1 = liquidity * (sqrtPriceX96 - sqrtPaX96) / Q96;
+    // Single-sided: price is outside the range, only the far side has liquidity.
+    // L must be computed from THAT side only (min(L0,L1) with a 0 balance = 0).
+    const priceBelowRange = currentTick < tickLower; // 100% token0
+    const priceAboveRange = currentTick > tickUpper; // 100% token1
+    if (priceBelowRange) {
+      liquidity = bal0 * sqrtPriceX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPriceX96) * Q96);
+      console.log(`  Single-sided: price below range → L from ${symbol.split('/')[0]} only = ${liquidity}`);
+    } else if (priceAboveRange) {
+      liquidity = bal1 * Q96 / (sqrtPriceX96 - sqrtPaX96);
+      console.log(`  Single-sided: price above range → L from ${symbol.split('/')[1]} only = ${liquidity}`);
     } else {
-      expected0 = liquidity * (sqrtPbX96 - sqrtPriceX96) * Q96 / (sqrtPriceX96 * sqrtPbX96);
+      const L0 = bal0 * sqrtPriceX96 * sqrtPbX96 / ((sqrtPbX96 - sqrtPriceX96) * Q96);
+      const L1 = bal1 * Q96 / (sqrtPriceX96 - sqrtPaX96);
+      liquidity = L0 < L1 ? L0 : L1;
+      const bindingSide = L0 < L1 ? symbol.split('/')[0] : symbol.split('/')[1];
+      let expected0 = bal0, expected1 = bal1;
+      if (liquidity === L0) {
+        expected1 = liquidity * (sqrtPriceX96 - sqrtPaX96) / Q96;
+      } else {
+        expected0 = liquidity * (sqrtPbX96 - sqrtPriceX96) * Q96 / (sqrtPriceX96 * sqrtPbX96);
+      }
+      console.log(`  L0 (${symbol.split('/')[0]}-bound): ${L0}`);
+      console.log(`  L1 (${symbol.split('/')[1]}-bound): ${L1}`);
+      console.log(`  L = ${liquidity} (${bindingSide}-constrained)`);
+      console.log(`  Expected ${symbol.split('/')[0]} used: ${formatUnits(expected0, decimals0)}`);
+      console.log(`  Expected ${symbol.split('/')[1]} used: ${formatUnits(expected1, decimals1)}`);
     }
-    console.log(`  L0 (${symbol.split('/')[0]}-bound): ${L0}`);
-    console.log(`  L1 (${symbol.split('/')[1]}-bound): ${L1}`);
-    console.log(`  L = ${liquidity} (${bindingSide}-constrained)`);
-    console.log(`  Expected ${symbol.split('/')[0]} used: ${formatUnits(expected0, decimals0)}`);
-    console.log(`  Expected ${symbol.split('/')[1]} used: ${formatUnits(expected1, decimals1)}`);
   }
   const amount0Max = (1n << 128n) - 1n;
   const amount1Max = (1n << 128n) - 1n;

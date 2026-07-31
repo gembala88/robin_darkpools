@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import fs from 'node:fs';
-import { Contract, Wallet, formatEther, formatUnits, AbiCoder, keccak256 } from 'ethers';
+import { Contract, Wallet, formatEther, formatUnits, AbiCoder, keccak256, parseEther } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, V4, V4_NFPM, LP_V3_CASHCAT_WETH } from './config.js';
 import { V3_NFPM_ABI, ERC20_ABI } from './abis.js';
@@ -8,7 +8,7 @@ import { UC } from './config.js';
 import { tg } from './telegram.js';
 import { withdrawV3, withdrawV4, swapBackAfterWithdraw } from './lp_withdraw.js';
 import { enrichPoolData, genericSwap, genericDeposit, detectPoolType } from './lp_auto_open.js';
-import { computeTickRange, computeSingleSideWethRange } from './lp_deposit.js';
+import { computeTickRange, computeSingleSideWethRange, computeSingleSideTokenRange } from './lp_deposit.js';
 import { getSqrtRatioAtTick, getAmountsForLiquidity, getEthUsdPrice, getTokenUsdPricesFromTick } from './v3_math.js';
 
 const abi = AbiCoder.defaultAbiCoder();
@@ -996,13 +996,43 @@ async function tryRebalance(entry, result, provider) {
   const rangeOld = `[${entry.tickLower}, ${entry.tickUpper}]`;
   const mode = config.depositMode || 'in-range';
   const tickSpacing = entry.tickSpacing || 60; // fallback
+  const token0Addr = entry.token0 || entry.currency0;
+  const token1Addr = entry.token1 || entry.currency1;
+  const hasWeth = token0Addr?.toLowerCase() === WETH_ADDR_MONITOR || token1Addr?.toLowerCase() === WETH_ADDR_MONITOR;
+  const wethIsToken0 = token0Addr?.toLowerCase() === WETH_ADDR_MONITOR;
 
-  const newTickRange = mode === 'single-side-eth' && entry.token0 && entry.token1
-    ? computeSingleSideWethRange(result.currentTick, Number(config.rangeSymmetricPct) || 30, tickSpacing, entry.token0, entry.token1, '0x0bd7d308f8e1639fab988df18a8011f41eacad73')
-    : computeTickRange(result.currentTick, Number(config.rangeSymmetricPct) || 30, tickSpacing);
+  // ── COMPOSITION-AWARE REOPEN ──
+  // Estimate dominant side from tick position vs old range (deterministic, works in dry-run).
+  // Above range → 100% token1; below range → 100% token0.
+  const aboveOld = result.currentTick > (entry.tickUpper || 0);
+  const belowOld = result.currentTick < (entry.tickLower || 0);
+  const estDominantToken = aboveOld ? token1Addr : (belowOld ? token0Addr : null);
+  const estPct = (aboveOld || belowOld) ? 1 : 0.5;
+
+  let strategy;
+  if (estDominantToken?.toLowerCase() === WETH_ADDR_MONITOR && estPct >= 0.9) strategy = '3a-WETH (reopen WETH, no swap)';
+  else if (estDominantToken && estPct >= 0.9) strategy = '3b-TOKEN (single-side-token, no swap-back)';
+  else strategy = '5-MIXED (full swap-back)';
+
+  const depMode = strategy.startsWith('3b')
+    ? 'single-side-token'
+    : (mode === 'in-range' ? 'in-range' : 'single-side-eth');
+
+  const symPct = Number(config.rangeSymmetricPct) || 30;
+  const tokenAddr = depMode === 'single-side-token'
+    ? (estDominantToken || (wethIsToken0 ? token1Addr : token0Addr))
+    : null;
+  let newTickRange;
+  if (depMode === 'single-side-token' && token0Addr && token1Addr && tokenAddr) {
+    newTickRange = computeSingleSideTokenRange(result.currentTick, symPct, tickSpacing, token0Addr, token1Addr, tokenAddr);
+  } else if (depMode === 'single-side-eth' && token0Addr && token1Addr) {
+    newTickRange = computeSingleSideWethRange(result.currentTick, symPct, tickSpacing, token0Addr, token1Addr, WETH_ADDR_MONITOR);
+  } else {
+    newTickRange = computeTickRange(result.currentTick, symPct, tickSpacing);
+  }
   const rangeNew = `[${newTickRange.tickLower}, ${newTickRange.tickUpper}]`;
 
-  const msg = `🔄 AUTO-REBALANCE #${entry.tokenId}: range lama ${rangeOld} -> range baru ${rangeNew}, harga sekarang tick=${result.currentTick}, IL sebelum=${result.ilPct.toFixed(2)}%`;
+  const msg = `🔄 AUTO-REBALANCE #${entry.tokenId}: range lama ${rangeOld} -> range baru ${rangeNew}, harga sekarang tick=${result.currentTick}, IL sebelum=${result.ilPct.toFixed(2)}%\nStrategy: ${strategy}`;
 
   if (!wallet) {
     console.log(`  [rebalance DRY] ${msg}`);
@@ -1054,7 +1084,7 @@ async function tryRebalance(entry, result, provider) {
   }
 
   // Step 3: Enrich pool data untuk deposit
-  const poolLike = { pairAddress: poolAddr, baseToken: { address: entry.token0 }, quoteToken: { address: entry.token1 } };
+  const poolLike = { pairAddress: poolAddr, baseToken: { address: token0Addr }, quoteToken: { address: token1Addr } };
   const poolInfo = await enrichPoolData(poolLike, execProv);
   if (!poolInfo) {
     console.log('  [rebalance] enrichPoolData failed');
@@ -1066,7 +1096,57 @@ async function tryRebalance(entry, result, provider) {
   poolInfo.tickLower = newTickRange.tickLower;
   poolInfo.tickUpper = newTickRange.tickUpper;
 
-  // Step 4: Swap + Deposit dengan range baru
+  // ── Step 4: COMPOSITION-AWARE REOPEN ──
+  // Baca komposisi wallet NYATA setelah withdraw (bukan prediksi tick).
+  // 3a: WETH dominan → old flow (swap ke WETH, deposit WETH)
+  // 3b: TOKEN dominan → single-side-token (skip swap-back, deposit token langsung)
+  // 5 : campur 10-90% → old fallback (full swap-back)
+  const t0c = new Contract(token0Addr, ERC20_ABI, execProv);
+  const t1c = new Contract(token1Addr, ERC20_ABI, execProv);
+  const [bal0, bal1] = await Promise.all([t0c.balanceOf(wallet.address), t1c.balanceOf(wallet.address)]);
+  const dec0 = poolInfo.decimals0 ?? 18;
+  const dec1 = poolInfo.decimals1 ?? 18;
+  const usdPrices = await getTokenUsdPrices(token0Addr, token1Addr, result.currentTick, 0, execProv);
+  const usd0 = usdPrices ? (Number(bal0) / 10 ** dec0) * usdPrices.token0Usd : 0;
+  const usd1 = usdPrices ? (Number(bal1) / 10 ** dec1) * usdPrices.token1Usd : 0;
+  const totalUsd = usd0 + usd1;
+  const wethUsd = wethIsToken0 ? usd0 : usd1;
+  const wethPct = totalUsd > 0 ? wethUsd / totalUsd : 0.5;
+  console.log(`  [rebalance] komposisi aktual: ${(usd0 || 0).toFixed(2)}$ (token0) + ${(usd1 || 0).toFixed(2)}$ (token1) → WETH ${(wethPct * 100).toFixed(1)}%`);
+
+  let stratLabel;
+  if (hasWeth && wethPct >= 0.9) stratLabel = '3a-WETH (old flow)';
+  else if (wethPct <= 0.1 || !hasWeth) stratLabel = '3b-TOKEN (single-side-token, skip swap-back)';
+  else stratLabel = '5-MIXED (full swap-back)';
+  console.log(`  [rebalance] strategy: ${stratLabel}`);
+
+  const dominantIsWeth = wethPct >= 0.9 && hasWeth;
+
+  // 3b: deposit token langsung, TANPA swap apapun
+  if (!dominantIsWeth) {
+    const dominantToken = usd0 >= usd1 ? token0Addr : token1Addr;
+    const depConfig = { ...config, depositMode: 'single-side-token', singleSideToken: dominantToken };
+    poolInfo.tickLower = newTickRange.tickLower;
+    poolInfo.tickUpper = newTickRange.tickUpper;
+    const position = await genericDeposit(poolInfo, amountEth, execProv, wallet, depConfig);
+    if (!position) {
+      console.log('  [rebalance] deposit 3b failed setelah withdraw');
+      await tg(`⚠️ AUTO-REBALANCE PARTIAL: closed #${entry.tokenId} TAPI deposit 3b gagal — dana di wallet, next cycle`).catch(() => {});
+      return false;
+    }
+    entry._lastRebalanceAt = Date.now();
+    await tg(`✅ ${msg}\nStrategy: ${stratLabel}\n→ Token ID baru: <code>${position.tokenId}</code>`).catch(() => {});
+    console.log(`  [rebalance] SUCCESS 3b: #${entry.tokenId} -> #${position.tokenId}`);
+    return true;
+  }
+
+  // 5 (mixed): swap-back penuh dulu → konsolidasi ke ETH/WETH
+  if (wethPct < 0.9) {
+    const sb = await swapBackAfterWithdraw(execProv, wallet, [token0Addr, token1Addr], config, true).catch(() => null);
+    console.log(`  [rebalance] swap-back mixed: ${sb?.skipped ? 'skipped' : sb?.failed?.length ? 'partial' : 'ok'}`);
+  }
+
+  // 3a + 5: old flow — swap + deposit
   const swapResult = await genericSwap(poolInfo, amountEth, execProv, wallet, config);
   if (!swapResult) {
     console.log('  [rebalance] swap failed setelah close');
@@ -1082,7 +1162,7 @@ async function tryRebalance(entry, result, provider) {
   }
 
   entry._lastRebalanceAt = Date.now();
-  await tg(`✅ ${msg}\n→ Token ID baru: <code>${position.tokenId}</code>`).catch(() => {});
+  await tg(`✅ ${msg}\nStrategy: ${stratLabel}\n→ Token ID baru: <code>${position.tokenId}</code>`).catch(() => {});
   console.log(`  [rebalance] SUCCESS: #${entry.tokenId} -> #${position.tokenId}`);
   return true;
 }
