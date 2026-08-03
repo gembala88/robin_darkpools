@@ -91,21 +91,34 @@ function sanityCheck(pos, currentTick, sqrtPriceX96) {
 async function confirmPositionClosed(provider, tokenId, dex) {
   try {
     if (dex === 'V3') {
-      const nfpm = new Contract(V3.nfpm, ['function ownerOf(uint256) view returns (address)', 'function positions(uint256) view returns (uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)'], provider);
-      // If ownerOf reverts, position NFT is burned — definitely closed
+      const nfpm = new Contract(V3.nfpm, V3_NFPM_ABI.concat(['function ownerOf(uint256) view returns (address)']), provider);
+      // If ownerOf reverts with "invalid token ID", position NFT is burned — definitely closed.
+      // BUT a network/RPC error is NOT proof of closure — must fail-safe KEEP.
       let owner;
-      try { owner = await nfpm.ownerOf(tokenId); } catch { return true; }
+      try {
+        owner = await nfpm.ownerOf(tokenId);
+      } catch (e) {
+        if (isRevertNotNetworkError(e)) return true; // genuine on-chain revert = burned
+        console.warn(`  confirmPositionClosed V3 #${tokenId}: ownerOf FAILED (fail-safe KEEP) — ${(e?.shortMessage || e?.message || e).slice(0, 80)}`);
+        return false; // RPC glitch/timeout — NEVER remove a possibly-live position
+      }
       if (!owner) return true;
       // Owner exists — check liquidity directly
       const pos = await nfpm.positions.staticCall(tokenId);
       const closed = pos.liquidity === 0n && pos.tokensOwed0 === 0n && pos.tokensOwed1 === 0n;
-      if (!closed) console.warn(`  confirmPositionClosed V3 #${tokenId}: liquidity=${pos.liquidity.toString()} tokensOwed=${pos.tokensOwed0}/${pos.tokensOwed1} — NOT closed`);
+      if (!closed) console.warn(`  confirmPositionClosed V3 #${tokenId}: liquidity=${pos.liquidity?.toString() ?? '?'} tokensOwed=${pos.tokensOwed0 ?? '?'}/${pos.tokensOwed1 ?? '?'} — NOT closed`);
       return closed;
     }
     if (dex === 'V4') {
       const nfpm = new Contract(V4_NFPM, ['function ownerOf(uint256) view returns (address)'], provider);
       let owner;
-      try { owner = await nfpm.ownerOf(tokenId); } catch { return true; }
+      try {
+        owner = await nfpm.ownerOf(tokenId);
+      } catch (e) {
+        if (isRevertNotNetworkError(e)) return true; // genuine on-chain revert = burned
+        console.warn(`  confirmPositionClosed V4 #${tokenId}: ownerOf FAILED (fail-safe KEEP) — ${(e?.shortMessage || e?.message || e).slice(0, 80)}`);
+        return false; // RPC glitch/timeout — NEVER remove a possibly-live position
+      }
       if (!owner) return true;
       // V4: check position liquidity directly
       const reader = new Contract(V4_NFPM, ['function getPositionLiquidity(uint256) view returns (uint128)'], provider);
@@ -119,6 +132,19 @@ async function confirmPositionClosed(provider, tokenId, dex) {
     console.warn(`  confirmPositionClosed error #${tokenId}: ${e.shortMessage || e.message.slice(0, 80)}`);
     return false; // On error, DON'T remove (fail safe)
   }
+}
+
+// Distinguish a genuine on-chain revert (burned token → safe to treat as closed)
+// from a network/RPC failure (must NOT remove a possibly-live position).
+// FAIL-SAFE: ONLY a deterministic on-chain CALL_EXCEPTION proves burned.
+// Anything else (network error, timeout, unknown) → false → KEEP position.
+function isRevertNotNetworkError(e) {
+  const code = e?.code;
+  const msg = `${e?.shortMessage || ''} ${e?.message || ''} ${e?.error?.message || ''}`.toLowerCase();
+  if (code === 'CALL_EXCEPTION') return true;              // on-chain revert = token burned
+  if (/execution reverted|invalid token/i.test(msg)) return true;
+  // network / RPC / unknown → fail-safe KEEP (never remove a possibly-live position)
+  return false;
 }
 
 // ===== TRAILING TAKE-PROFIT =====
@@ -684,7 +710,13 @@ async function monitorOnce(provider, config) {
 
       // Auto-rebalance: OOR ringan (belum mencapai SL)
       if (!result.autoClosed && !result.autoCloseFailed && result.shouldNotify) {
-        await tryRebalance(entry, result, provider);
+        const rebalanced = await tryRebalance(entry, result, provider);
+        if (rebalanced && rebalanced.tokenId) {
+          // Rebalance minted a NEW position (depositV3 already pushed it to state on disk).
+          // Mark the OLD (now-withdrawn) entry for removal; the merge-on-save below
+          // preserves the new position that depositV3 wrote.
+          toRemove.push(entry);
+        }
       }
     } else if (entry.dex === 'V4') {
       const result = await checkV4(provider, entry, config);
@@ -736,7 +768,12 @@ async function monitorOnce(provider, config) {
 
       // Auto-rebalance: OOR ringan V4
       if (!result.autoClosed && !result.autoCloseFailed && result.shouldNotify) {
-        await tryRebalance(entry, result, provider);
+        const rebalanced = await tryRebalance(entry, result, provider);
+        if (rebalanced && rebalanced.tokenId) {
+          // Mark the OLD (now-withdrawn) V4 entry for removal; the merge-on-save below
+          // preserves the new V4 position that depositV4 wrote to disk.
+          toRemove.push(entry);
+        }
       }
     }
   }
@@ -745,6 +782,43 @@ async function monitorOnce(provider, config) {
   if (toRemove.length > 0) {
     state.positions = state.positions.filter(p => !toRemove.includes(p));
     console.log(`  Cleaned ${toRemove.length} auto-closed position(s) from state`);
+  }
+
+  // ── MERGE-ON-SAVE (anti data-loss) ──
+  // depositV3/depositV4 (called during rebalance) AND auto-open processes write
+  // new positions to lp_state.json via their OWN loadState/saveState. If we just
+  // saveState(state) here with our stale in-memory copy, we CLOBBER those freshly
+  // minted positions — leaving live dana untracked. So: reload fresh from disk,
+  // overlay this cycle's in-memory runtime fields, and re-apply removals.
+  try {
+    const fresh = loadState();
+    const removedIds = new Set(toRemove.map(p => `${p.dex}:${p.tokenId}`));
+    // In-memory entries carry this cycle's runtime updates (tpArmed/tpPeak/
+    // lastNotifiedOOR/_rebalanceOorSince/_lastRebalanceAt) — prefer them.
+    const inMemMap = new Map();
+    for (const p of state.positions) {
+      if (removedIds.has(`${p.dex}:${p.tokenId}`)) continue;
+      inMemMap.set(`${p.dex}:${p.tokenId}`, p);
+    }
+    const merged = [];
+    const seen = new Set();
+    // Keep every position that currently exists on disk (incl. new deposits written
+    // by depositV3/depositV4/auto-open), minus ones removed this cycle.
+    for (const p of (fresh.positions || [])) {
+      const k = `${p.dex}:${p.tokenId}`;
+      if (removedIds.has(k)) continue;
+      merged.push(inMemMap.get(k) || p);
+      seen.add(k);
+    }
+    // Any in-memory position missing from disk (paranoia) — keep it too.
+    for (const [k, p] of inMemMap) {
+      if (!seen.has(k)) { merged.push(p); seen.add(k); }
+    }
+    fresh.monitor = state.monitor;
+    fresh.positions = merged;
+    state = fresh;
+  } catch (e) {
+    console.warn(`  merge-on-save failed, writing stale state: ${e.shortMessage || e.message}`);
   }
 
   if (anyFail) {
@@ -1162,7 +1236,7 @@ async function tryRebalance(entry, result, provider) {
     entry._lastRebalanceAt = Date.now();
     await tg(`✅ ${msg}\nStrategy: ${stratLabel}\n→ Token ID baru: <code>${position.tokenId}</code>`).catch(() => {});
     console.log(`  [rebalance] SUCCESS 3b: #${entry.tokenId} -> #${position.tokenId}`);
-    return true;
+    return position; // return new position so monitor can update state tracking
   }
 
   // 5 (mixed): swap-back penuh dulu → konsolidasi ke ETH/WETH
@@ -1189,7 +1263,7 @@ async function tryRebalance(entry, result, provider) {
   entry._lastRebalanceAt = Date.now();
   await tg(`✅ ${msg}\nStrategy: ${stratLabel}\n→ Token ID baru: <code>${position.tokenId}</code>`).catch(() => {});
   console.log(`  [rebalance] SUCCESS: #${entry.tokenId} -> #${position.tokenId}`);
-  return true;
+  return position; // return new position so monitor can update state tracking
 }
 
 async function main() {
