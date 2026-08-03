@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import fs from 'node:fs';
+import path from 'node:path';
 import { Contract, Wallet, formatEther, formatUnits, AbiCoder, keccak256, parseEther } from 'ethers';
 import { makeProvider } from './provider.js';
 import { V3, V4, V4_NFPM, LP_V3_CASHCAT_WETH } from './config.js';
@@ -234,7 +235,9 @@ async function getRealTimeFeesV3(provider, tokenId) {
 }
 
 // Compute current USD value of a position from its live amounts.
-async function computePositionUsdValue(provider, liquidity, sqrtPriceX96, tickLower, tickUpper, currentTick, tokensOwed0, tokensOwed1, token0, token1) {
+// Export so lp_reconcile.js can estimate entryValueUsd for recovered positions
+// (uses current price as the entry proxy — we don't know the original entry).
+export async function computePositionUsdValue(provider, liquidity, sqrtPriceX96, tickLower, tickUpper, currentTick, tokensOwed0, tokensOwed1, token0, token1) {
   const prices = await getTokenUsdPrices(token0, token1, currentTick, sqrtPriceX96, provider);
   if (!prices || (prices.token0Usd === 0 && prices.token1Usd === 0)) return null;
 
@@ -1290,4 +1293,8 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error('FATAL:', e.shortMessage || e.message); process.exit(1); });
+// Only auto-execute if this is the main module (not imported by lp_reconcile.js)
+const isMain = process.argv[1] && path.basename(process.argv[1]) === path.basename(import.meta.url);
+if (isMain) {
+  main().catch(e => { console.error('FATAL:', e.shortMessage || e.message); process.exit(1); });
+}
