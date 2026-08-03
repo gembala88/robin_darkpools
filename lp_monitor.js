@@ -646,7 +646,9 @@ async function checkV4(provider, entry, config) {
 }
 
 async function monitorOnce(provider, config) {
-  const state = loadState();
+  // `let` — merge-on-save below re-assigns state = fresh (reloads disk state so
+  // mid-cycle deposits written by depositV3/depositV4/auto-open are not clobbered).
+  let state = loadState();
   state.monitor ??= {};
   state.monitor.consecutiveFails ??= 0;
 
