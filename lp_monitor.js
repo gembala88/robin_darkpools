@@ -21,6 +21,30 @@ const AUTO_CLOSE_DRY = process.env.AUTO_CLOSE_DRY !== '0';
 const FORCE_TRIGGER = process.env.FORCE_TRIGGER === '1';
 const LIVE = process.env.DRY === '0' && process.env.PRIVATE_KEY;
 
+// ── SAFETY CHECK: AUTO_CLOSE_DRY must be explicitly set ──
+// Insiden lalu: AUTO_CLOSE_DRY tidak pernah di-set, default diam-diam ke
+// dry-run, posisi #541813 crash ke IL -68% tanpa auto-close. Jangan pernah
+// membiarkan default diam-diam tanpa peringatan yang jelas.
+const WARN_BOX = (t) => '='.repeat(t.length + 4) + '\n= ' + t + ' =\n' + '='.repeat(t.length + 4);
+if (process.env.AUTO_CLOSE_DRY === undefined) {
+  const warn = [
+    '\n' + WARN_BOX('⚠️  AUTO_CLOSE_DRY TIDAK DI-SET DI .env  ⚠️'),
+    '',
+    '  Auto-close BERJALAN DALAM MODE DRY-RUN (tidak akan mengeksekusi).',
+    '  Jika LP sedang live / ada dana, ini BISA MENYEBABKAN POSISI TIDAK TER-CLOSE',
+    '  saat IL menembus threshold (insiden #541813 IL -68%).',
+    '',
+    '  SET DI .env:',
+    '    AUTO_CLOSE_DRY=0   → LIVE auto-close',
+    '    AUTO_CLOSE_DRY=1   → dry-run (eksplisit)',
+    '='.repeat(72),
+    ''
+  ].join('\n');
+  console.warn(warn);
+} else {
+  console.log(`Auto-close mode: ${AUTO_CLOSE_DRY ? 'DRY-RUN (AUTO_CLOSE_DRY=1)' : 'LIVE (AUTO_CLOSE_DRY=0)'}`);
+}
+
 // --- TP config constants (from user-config.json) ---
 const TP_ARM_THRESHOLD = UC('lp.takeProfitArmPct') || 20;
 const TP_TRAIL_DISTANCE = UC('lp.takeProfitTrailPct') || 5;
@@ -1275,8 +1299,6 @@ async function main() {
   const provider = await makeProvider('LP_RPC_URL');
   const config = UC('lp');
   const isWatch = process.env.WATCH === '1';
-
-  console.log(`Auto-close: ${AUTO_CLOSE_DRY ? 'DRY-RUN (AUTO_CLOSE_DRY=1)' : 'LIVE (AUTO_CLOSE_DRY=0)'}`);
 
   if (isWatch) {
     console.log(`Continuous monitoring every ${config.monitorIntervalMs}ms. Ctrl+C to stop.`);
