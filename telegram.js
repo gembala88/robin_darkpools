@@ -21,7 +21,9 @@ export async function tg(text) {
         disable_web_page_preview: true, link_preview_options: { is_disabled: true } }),
     });
     if (S_CHANNEL) await _screenerSend(S_CHANNEL, text);
-  } catch {}
+  } catch (e) {
+    console.error('Telegram send failed:', e?.message || e);
+  }
 }
 
 async function _screenerSend(chatId, text) {
@@ -32,7 +34,9 @@ async function _screenerSend(chatId, text) {
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML',
         disable_web_page_preview: true, link_preview_options: { is_disabled: true } }),
     });
-  } catch {}
+  } catch (e) {
+    console.error('Telegram screener send failed:', e?.message || e);
+  }
 }
 
 export async function tgScreener(text) {
@@ -50,7 +54,9 @@ async function refreshEthUsd() {
     const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
     const j = await r.json();
     if (j?.ethereum?.usd) { ethUsd = j.ethereum.usd; priceAt = Date.now(); }
-  } catch {}
+  } catch (e) {
+    console.error('ETH price fetch failed:', e?.message || e);
+  }
   return ethUsd;
 }
 
