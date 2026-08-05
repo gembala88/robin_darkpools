@@ -11,7 +11,7 @@ import { makeProvider } from './provider.js';
 import { V3, V4, V4_NFPM, LP_V3_CASHCAT_WETH, LP_V4_CASHCAT_USDG, NATIVE } from './config.js';
 import { V3_NFPM_ABI, V4_NFPM_ABI, ERC20_ABI, UNIVERSAL_ROUTER_ABI, V3_SWAP_ROUTER_ABI } from './abis.js';
 import { UC, UCW } from './config.js';
-import { getTokenUsdPricesFromTick } from './v3_math.js';
+import { getTokenUsdPricesFromTick, getEthUsdPrice } from './v3_math.js';
 
 const abi = AbiCoder.defaultAbiCoder();
 const STATE_FILE = new URL('./lp_state.json', import.meta.url);
@@ -25,6 +25,10 @@ const MAX_ACTIVE_POSITIONS = Number(process.env.MAX_LP_POSITIONS || 3);
 // Compute entry USD value using pool tick at deposit time + token amounts.
 // Returns Number (USD) or null if prices unavailable (TP skipped).
 async function computeEntryUsdValue(amount0, amount1, token0, token1, entryTick, decimals0, decimals1) {
+  // Warm the live ETH/USD cache first — getTokenUsdPricesFromTick →
+  // getWethUsdPrice is a sync cache-reader; without this it silently falls
+  // back to $3000 and inflates the stored entryValueUsd for WETH pairs.
+  await getEthUsdPrice();
   const prices = getTokenUsdPricesFromTick(token0, token1, entryTick);
   if (!prices) return null;
   let value = 0;

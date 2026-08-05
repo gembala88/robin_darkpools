@@ -207,13 +207,17 @@ const WETH_ADDR_MONITOR = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
 
 // Derive token0/token1 USD prices: first try tick-based (WETH pairs), then DexScreener.
 async function getTokenUsdPrices(token0, token1, currentTick, sqrtPriceX96, provider) {
+  // CRITICAL: warm the live ETH/USD cache FIRST. getTokenUsdPricesFromTick() →
+  // getWethUsdPrice() is a SYNC cache-reader that NEVER fetches on its own — if
+  // the cache is still null it silently falls back to $3000. For WETH pairs the
+  // tick-based path below ALWAYS returns non-null, so the old code returned
+  // before ever calling getEthUsdPrice(), inflating every WETH-paired position
+  // value by ~1.6x (ETH now ~$1880) and arming take-profit on fake +60% gains.
+  await getEthUsdPrice();
   // Try tick-based derivation first (fast, no external API)
   const tickPrices = getTokenUsdPricesFromTick(token0, token1, currentTick);
   if (tickPrices) return tickPrices;
-  // Fallback: fetch ETH price directly
-  const ethUsd = await getEthUsdPrice();
-  if (!ethUsd) return null;
-  // Try DexScreener API for non-WETH pairs
+  // Fallback: ETH price already warmed above; try DexScreener API for non-WETH pairs
   try {
     const pairAddr = provider ? await resolveV3PoolAnyFee(token0, token1, provider) : null;
     if (pairAddr) {
