@@ -222,7 +222,7 @@ async function getTokenUsdPrices(token0, token1, currentTick, sqrtPriceX96, prov
     const pairAddr = provider ? await resolveV3PoolAnyFee(token0, token1, provider) : null;
     if (pairAddr) {
       const url = `https://api.dexscreener.com/latest/dex/pair/robinhood/${pairAddr.toLowerCase()}`;
-      const resp = await fetch(url);
+      const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
       const data = await resp.json();
       if (data?.pair?.priceUsd) {
         const baseAddr = data.pair.baseToken?.address?.toLowerCase();
@@ -884,7 +884,7 @@ function formatLpDuration(ts) {
   return `${m}m`;
 }
 
-async function sendPeriodicReport(provider) {
+export async function sendPeriodicReport(provider) {
   const state = loadState();
   if (!state.positions?.length) return;
 
@@ -1306,11 +1306,17 @@ async function main() {
 
   if (isWatch) {
     console.log(`Continuous monitoring every ${config.monitorIntervalMs}ms. Ctrl+C to stop.`);
-    const reportIntervalSec = Math.round((UC('lp.periodicReportIntervalMs') || 300000) / 1000);
+    const reportIntervalMs = UC('lp.periodicReportIntervalMs') || 300000;
+    const reportIntervalSec = Math.round(reportIntervalMs / 1000);
     console.log(`Periodic position report every ${reportIntervalSec}s (${Math.round(reportIntervalSec/60)} min) to Telegram.`);
     setInterval(() => {
-      sendPeriodicReport(provider).catch(e => console.error('Periodic report error:', e.shortMessage || e.message));
-    }, 300000);
+      // Hard timeout: even if an internal await hangs (RPC/fetch), the report
+      // must resolve-or-reject within a bounded time so it never stalls silently.
+      Promise.race([
+        sendPeriodicReport(provider),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Periodic report timed out after 60s')), 60000)),
+      ]).catch(e => console.error('Periodic report error:', e.shortMessage || e.message));
+    }, reportIntervalMs);
     while (true) {
       try { await monitorOnce(provider, config); }
       catch (e) { console.error(`Monitor error: ${e.shortMessage || e.message}`); }

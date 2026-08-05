@@ -11,6 +11,9 @@ const SWAP_TOPIC = topicId('Swap(bytes32,address,int128,int128,uint160,uint128,i
 const coder = AbiCoder.defaultAbiCoder();
 const enabled = !!(TOKEN && CHAT);
 const screenerEnabled = !!(S_TOKEN && S_CHAT);
+// Hard timeout so a blackholed connection can NEVER hang tg() forever —
+// a hung sendPeriodicReport() (which awaits tg) was stalling reports silently.
+const FETCH_TIMEOUT_MS = 15000;
 
 export async function tg(text) {
   if (!enabled) return;
@@ -19,6 +22,7 @@ export async function tg(text) {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: CHAT, text, parse_mode: 'HTML',
         disable_web_page_preview: true, link_preview_options: { is_disabled: true } }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (S_CHANNEL) await _screenerSend(S_CHANNEL, text);
   } catch (e) {
@@ -33,6 +37,7 @@ async function _screenerSend(chatId, text) {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML',
         disable_web_page_preview: true, link_preview_options: { is_disabled: true } }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (e) {
     console.error('Telegram screener send failed:', e?.message || e);
@@ -51,7 +56,9 @@ let priceAt = 0;
 async function refreshEthUsd() {
   if (ethUsd && Date.now() - priceAt < 120000) return ethUsd;
   try {
-    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd', {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     const j = await r.json();
     if (j?.ethereum?.usd) { ethUsd = j.ethereum.usd; priceAt = Date.now(); }
   } catch (e) {
