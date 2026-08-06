@@ -1,6 +1,6 @@
 // lp_withdraw.js — Close LP positions on V3 CASHCAT/WETH + V4 CASHCAT/USDG
 //   DRY=1 node lp_withdraw.js                  # simulate
-//   LIVE=1 PRIVATE_KEY=0x.. node lp_withdraw.js   # execute real withdraw
+//   DRY=0 PRIVATE_KEY=0x.. node lp_withdraw.js   # execute real withdraw
 //   TOKEN_ID=100 node lp_withdraw.js            # specific V3 tokenId
 //   V4_TOKEN_ID=42 node lp_withdraw.js          # specific V4 tokenId (not yet tracked)
 

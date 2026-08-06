@@ -19,7 +19,11 @@ const { sqrt } = Math;
 
 const AUTO_CLOSE_DRY = process.env.AUTO_CLOSE_DRY !== '0';
 const FORCE_TRIGGER = process.env.FORCE_TRIGGER === '1';
-const LIVE = process.env.DRY === '0' && process.env.PRIVATE_KEY;
+// SINGLE source of truth: LIVE must derive from AUTO_CLOSE_DRY (NOT a separate
+// DRY env var). Previously this read process.env.DRY, so LIVE was always false
+// despite AUTO_CLOSE_DRY=0 in .env -> stop-loss AND take-profit silently skipped
+// ("not live") — same class of bug as the #541813 incident.
+const LIVE = !AUTO_CLOSE_DRY && !!process.env.PRIVATE_KEY;
 
 // ── SAFETY CHECK: AUTO_CLOSE_DRY must be explicitly set ──
 // Insiden lalu: AUTO_CLOSE_DRY tidak pernah di-set, default diam-diam ke

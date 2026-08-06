@@ -1,7 +1,7 @@
 // lp_deposit.js — Create LP positions on V3 CASHCAT/WETH + V4 CASHCAT/USDG
 //   DRY=1 node lp_deposit.js           # simulate both positions
-//   LIVE=1 PRIVATE_KEY=0x.. node lp_deposit.js   # execute real deposits
-//   SKIP_SWAP=1 LIVE=1 PRIVATE_KEY=0x.. node lp_deposit.js   # skip swap, use current CASHCAT balance
+//   DRY=0 PRIVATE_KEY=0x.. node lp_deposit.js   # execute real deposits
+//   SKIP_SWAP=1 DRY=0 PRIVATE_KEY=0x.. node lp_deposit.js   # skip swap, use current CASHCAT balance
 
 import 'dotenv/config';
 import fs from 'node:fs';
