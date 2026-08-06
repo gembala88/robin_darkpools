@@ -86,7 +86,7 @@
     "oorNotifyMinIlChangePct": 5,
     "dipDetectMinPct": -50,
     "dipDetectMaxPct": -40,
-    "enableAutoRebalance": false,
+    "enableAutoRebalance": true,
     "rebalanceMinOorMinutes": 10,
     "rebalanceCooldownHours": 2,
     "monitorIntervalMs": 25000,
