@@ -108,7 +108,11 @@ export async function getEthUsdPrice() {
   const now = Date.now();
   if (_ethUsdPrice !== null && now - _ethUsdAt < 120000) return _ethUsdPrice;
   try {
-    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
+    // Hard timeout — a blackholed connection must not hang getTokenUsdPrices()
+    // (called by every report + checkV3), which would stall periodic reports.
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd', {
+      signal: AbortSignal.timeout(15000),
+    });
     const j = await r.json();
     if (j?.ethereum?.usd) { _ethUsdPrice = j.ethereum.usd; _ethUsdAt = now; }
   } catch { /* keep existing */ }
